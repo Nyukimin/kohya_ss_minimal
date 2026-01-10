@@ -1,0 +1,27 @@
+# SDXL Face LoRA Minimal Docker Compose
+# SDXL顔LoRA学習用の最小限構成
+
+services:
+  kohya-ss-minimal:
+    container_name: kohya-ss-minimal
+    image: ghcr.io/bmaltais/kohya-ss-gui:latest
+    ports:
+      - 7860:7860
+    environment:
+      # GPU最適化
+      SAFETENSORS_FAST_GPU: 1
+    volumes:
+      # 必須ボリューム（SDXL顔LoRA用）
+      - ./train_data:/app/train_data        # 学習画像
+      - ./outputs:/app/outputs              # 出力モデル
+      - ./models:/app/models                # SDXLチェックポイント
+      - ./logs:/app/logs                    # 学習ログ
+      # キャッシュ（メモリ効率化）
+      - ./.cache:/home/user/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["all"]

@@ -3099,6 +3099,17 @@ def lora_tab(
     with gr.Tab("Tools"):
         lora_tools = LoRATools(headless=headless)
 
+    # Add SDXL Simple tab
+    with gr.Tab("Minimal"):
+        try:
+            from minimal.sdxl_simple_tab import sdxl_simple_tab
+            sdxl_simple_tab(headless=headless, config=config, use_shell_flag=use_shell)
+        except ImportError:
+            gr.Markdown("**SDXL Simple tab not available**")
+            gr.Markdown("The minimal SDXL training interface is not installed.")
+        except Exception as e:
+            gr.Markdown(f"**Error loading SDXL Simple tab**: {str(e)}")
+
     with gr.Tab("Guides"):
         gr.Markdown("This section provide Various LoRA guides and information...")
         if os.path.exists(rf"{scriptdir}/docs/LoRA/top_level.md"):
