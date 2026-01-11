@@ -14,7 +14,7 @@ minimal/
 ├── docker-compose.yaml                  # Minimal Docker setup
 └── docs/                               # Implementation documentation
     ├── Specification_001.md            # Project specification
-    └── ImplementationSpecification_002.md  # Implementation details (v2.0)
+    └── ImplementationSpecification_004.md  # Implementation details (latest)
 ```
 
 ## Design Philosophy
@@ -52,7 +52,7 @@ The minimal interface integrates into the main kohya-ss GUI as a "Minimal" tab a
 
 ### Documentation
 - **docs/Specification_001.md**: Project background and requirements
-- **docs/ImplementationSpecification_002.md**: Corrected technical implementation
+- **docs/ImplementationSpecification_004.md**: Latest technical implementation (current state + gaps)
 
 ## Installation
 
@@ -92,7 +92,7 @@ minimal/
 ├── docker-compose.yaml                  # 最小限Docker設定
 └── docs/                               # 実装ドキュメント
     ├── Specification_001.md            # プロジェクト仕様
-    └── ImplementationSpecification_002.md  # 実装詳細（v2.0）
+    └── ImplementationSpecification_004.md  # 実装詳細（latest）
 ```
 
 ## 設計思想
@@ -130,7 +130,7 @@ minimal インターフェースは、メインkohya-ss GUIのLoRAタブ内で�
 
 ### ドキュメント
 - **docs/Specification_001.md**: プロジェクト背景と要求事項
-- **docs/ImplementationSpecification_002.md**: 修正版技術実装詳細
+- **docs/ImplementationSpecification_004.md**: 最新の技術実装詳細（現状+ギャップ）
 
 ## インストール
 

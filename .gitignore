@@ -33,11 +33,23 @@ logs
 # Miscellaneous
 uninstall.txt
 
-# Test files
-test/output
-test/log*
-test/*.json
-test/ft
+# Test files (exclude entire test directories)
+test/
+minimal/tests/
+
+# Development/IDE specific files (not needed for end users)
+.serena/
+rules/
+.claude/
+.cursorrules
+.clauderules
+.augmentignore
+_typos.toml
+nul
+
+# Keep kohya-ss fork (kohya_gui/, tools/, setup/, etc.) but exclude development files
+# Minimal tab implementation is in minimal/ folder
+# Only minimal changes to kohya-ss (e.g., lora_gui.py adding Minimal tab)
 
 # Temporary requirements
 requirements_tmp_for_setup.txt

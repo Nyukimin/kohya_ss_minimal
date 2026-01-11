@@ -4,7 +4,11 @@ from pathlib import Path
 from typing import Any
 import logging
 
+# ログ設定を最初に定義
+log = logging.getLogger(__name__)
+
 # Minimal用プリセット設定を読み込み
+
 from minimal.presets import (
     SDXL_FACE_LORA_DEFAULTS,
     SDXL_FACE_LORA_FIXED,
@@ -14,7 +18,29 @@ from minimal.presets import (
     SAVE_PRECISION_CHOICES
 )
 
-log = logging.getLogger(__name__)
+# ユーザー設定をTOMLから読み込み（エラー時はデフォルト値を使用）
+try:
+    import toml
+    config_path = Path(__file__).parent / "config.toml"
+    if config_path.exists():
+        config_data = toml.load(config_path)
+        # TOMLの階層構造をフラット化
+        USER_DEFAULTS = {
+            **config_data.get('model', {}),
+            **config_data.get('training_data', {}),
+            **config_data.get('training_params', {}),
+            **config_data.get('output', {})
+        }
+        log.info(f"Loaded user defaults from {config_path}")
+    else:
+        log.info("config.toml not found, using default values")
+        USER_DEFAULTS = {}
+except Exception as e:
+    log.warning(f"Failed to load config.toml: {e}")
+    USER_DEFAULTS = {}
+
+# フォルダ選択機能をインポート
+from kohya_gui.common_gui import get_folder_path, get_file_path
 
 # kohya-ssスタイルのアイコン
 folder_symbol = "\U0001f4c2"  # 📂
@@ -31,6 +57,7 @@ class SDXLSimpleTab:
         self.headless = headless
         self.config = config
         self.use_shell_flag = use_shell_flag
+        self.config_path = Path(__file__).parent / "config.toml"
         
     def create_ui(self):
         """UI作成（Accordion形式、既存スタイルに合わせる）"""
@@ -43,27 +70,27 @@ class SDXLSimpleTab:
                     self.pretrained_model_name_or_path = gr.Textbox(
                         label="SDXL Checkpoint path",
                         placeholder="SDXLモデルのパス (.safetensors or .ckpt)",
-                        value="",
+                        value=USER_DEFAULTS.get('pretrained_model_name_or_path', ''),
                         interactive=True,
                         scale=3
                     )
                     model_file_button = gr.Button(
-                        f"{folder_symbol}",
-                        elem_id="model_file_button",
-                        scale=1,
-                        size="sm"
+                        folder_symbol,
+                        elem_id="open_folder_small",
+                        elem_classes=["tool"],
+                        visible=(not self.headless)
                     )
                 
                 with gr.Row():
                     self.save_model_as = gr.Dropdown(
                         label="Save trained model as",
                         choices=SAVE_MODEL_AS_CHOICES,
-                        value=SDXL_FACE_LORA_DEFAULTS['save_model_as']
+                        value=USER_DEFAULTS.get('save_model_as', SDXL_FACE_LORA_DEFAULTS['save_model_as'])
                     )
                     self.save_precision = gr.Dropdown(
                         label="Save precision", 
                         choices=SAVE_PRECISION_CHOICES,
-                        value=SDXL_FACE_LORA_DEFAULTS['save_precision']
+                        value=USER_DEFAULTS.get('save_precision', SDXL_FACE_LORA_DEFAULTS['save_precision'])
                     )
             
             # Training Data
@@ -72,28 +99,28 @@ class SDXLSimpleTab:
                     self.train_data_dir = gr.Textbox(
                         label="Image folder",
                         placeholder="学習画像が含まれるフォルダ",
-                        value="",
+                        value=USER_DEFAULTS.get('train_data_dir', ''),
                         interactive=True,
                         scale=3
                     )
                     image_folder_button = gr.Button(
-                        f"{folder_symbol}",
-                        elem_id="image_folder_button",
-                        scale=1,
-                        size="sm"
+                        folder_symbol,
+                        elem_id="open_folder_small",
+                        elem_classes=["tool"],
+                        visible=(not self.headless)
                     )
                 
                 with gr.Row():
                     self.max_resolution = gr.Dropdown(
                         label="Resolution",
                         choices=RESOLUTION_CHOICES,
-                        value=SDXL_FACE_LORA_DEFAULTS['max_resolution'],
+                        value=USER_DEFAULTS.get('max_resolution', SDXL_FACE_LORA_DEFAULTS['max_resolution']),
                         info="学習解像度（顔LoRAは512x512推奨）"
                     )
                     self.train_batch_size = gr.Dropdown(
                         label="Batch size",
                         choices=BATCH_SIZE_CHOICES,
-                        value=SDXL_FACE_LORA_DEFAULTS['train_batch_size'],
+                        value=USER_DEFAULTS.get('train_batch_size', SDXL_FACE_LORA_DEFAULTS['train_batch_size']),
                         info="バッチサイズ（1推奨）"
                     )
             
@@ -102,19 +129,19 @@ class SDXLSimpleTab:
                 with gr.Row():
                     self.learning_rate = gr.Textbox(
                         label="Learning rate",
-                        value=str(SDXL_FACE_LORA_DEFAULTS['learning_rate']),
+                        value=str(USER_DEFAULTS.get('learning_rate', SDXL_FACE_LORA_DEFAULTS['learning_rate'])),
                         info="学習率（U-Net用）"
                     )
                     self.text_encoder_lr = gr.Textbox(
                         label="Text encoder learning rate",
-                        value=str(SDXL_FACE_LORA_DEFAULTS['learning_rate'] * 0.5),  # 半分程度
+                        value=str(USER_DEFAULTS.get('text_encoder_lr', SDXL_FACE_LORA_DEFAULTS['learning_rate'] * 0.5)),  # 半分程度
                         info="Text Encoder学習率"
                     )
                 
                 with gr.Row():
                     self.network_dim = gr.Number(
                         label="LoRA Rank (dim)",
-                        value=SDXL_FACE_LORA_DEFAULTS['network_dim'],
+                        value=USER_DEFAULTS.get('network_dim', SDXL_FACE_LORA_DEFAULTS['network_dim']),
                         minimum=1,
                         maximum=128,
                         step=1,
@@ -122,7 +149,7 @@ class SDXLSimpleTab:
                     )
                     self.network_alpha = gr.Number(
                         label="LoRA Alpha",
-                        value=SDXL_FACE_LORA_DEFAULTS['network_alpha'],
+                        value=USER_DEFAULTS.get('network_alpha', SDXL_FACE_LORA_DEFAULTS['network_alpha']),
                         minimum=1,
                         maximum=128,
                         step=1,
@@ -132,14 +159,14 @@ class SDXLSimpleTab:
                 with gr.Row():
                     self.epoch = gr.Number(
                         label="Epochs",
-                        value=SDXL_FACE_LORA_DEFAULTS['epoch'],
+                        value=USER_DEFAULTS.get('epoch', SDXL_FACE_LORA_DEFAULTS['epoch']),
                         minimum=1,
                         maximum=100,
                         step=1
                     )
                     self.max_train_steps = gr.Number(
                         label="Max train steps",
-                        value=SDXL_FACE_LORA_DEFAULTS['max_train_steps'],
+                        value=USER_DEFAULTS.get('max_train_steps', SDXL_FACE_LORA_DEFAULTS['max_train_steps']),
                         minimum=0,
                         step=100,
                         info="0 = epoch数のみ使用"
@@ -148,12 +175,12 @@ class SDXLSimpleTab:
                 with gr.Row():
                     self.cache_latents = gr.Checkbox(
                         label="Cache latents",
-                        value=SDXL_FACE_LORA_DEFAULTS['cache_latents'],
+                        value=USER_DEFAULTS.get('cache_latents', SDXL_FACE_LORA_DEFAULTS['cache_latents']),
                         info="latentsをキャッシュして高速化"
                     )
                     self.cache_latents_to_disk = gr.Checkbox(
                         label="Cache latents to disk",
-                        value=SDXL_FACE_LORA_DEFAULTS['cache_latents_to_disk'],
+                        value=USER_DEFAULTS.get('cache_latents_to_disk', SDXL_FACE_LORA_DEFAULTS['cache_latents_to_disk']),
                         info="ディスクキャッシュでVRAM節約"
                     )
             
@@ -163,7 +190,7 @@ class SDXLSimpleTab:
                     self.output_name = gr.Textbox(
                         label="Output name",
                         placeholder="character_name_lora",
-                        value="",
+                        value=USER_DEFAULTS.get('output_name', ''),
                         info="出力するLoRAモデルの名前"
                     )
                 
@@ -171,14 +198,14 @@ class SDXLSimpleTab:
                     self.output_dir = gr.Textbox(
                         label="Output folder",
                         placeholder="出力フォルダ",
-                        value="./outputs",
+                        value=USER_DEFAULTS.get('output_dir', './outputs'),
                         scale=3
                     )
                     output_folder_button = gr.Button(
-                        f"{folder_symbol}",
-                        elem_id="output_folder_button",
-                        scale=1,
-                        size="sm"
+                        folder_symbol,
+                        elem_id="open_folder_small",
+                        elem_classes=["tool"],
+                        visible=(not self.headless)
                     )
             
             # Training Control
@@ -188,6 +215,12 @@ class SDXLSimpleTab:
                         "Start training",
                         variant="primary",
                         scale=2
+                    )
+                    self.save_config_button = gr.Button(
+                        "Save Config",
+                        variant="secondary",
+                        scale=1,
+                        interactive=True  # 常に有効
                     )
                     self.stop_button = gr.Button(
                         "Stop training",
@@ -205,12 +238,104 @@ class SDXLSimpleTab:
                 )
             
             # イベント接続
+            # フォルダ選択ボタン
+            model_file_button.click(
+                fn=lambda: get_file_path(
+                    default_extension=".safetensors", 
+                    extension_name="SDXL Model files"
+                ),
+                outputs=[self.pretrained_model_name_or_path],
+                show_progress=False
+            )
+            
+            image_folder_button.click(
+                fn=get_folder_path,
+                outputs=[self.train_data_dir],
+                show_progress=False
+            )
+            
+            output_folder_button.click(
+                fn=get_folder_path,
+                outputs=[self.output_dir],
+                show_progress=False
+            )
+            
+            # 設定保存ボタン（明示保存フラグ付き）
+            explicit_save_flag = gr.State(True)
+            auto_save_flag = gr.State(False)
+
+            self.save_config_button.click(
+                fn=self.save_config,
+                inputs=[explicit_save_flag] + self._get_all_inputs(),
+                outputs=[self.output_log],
+                show_progress=False
+            )
+            
+            # 値変更時に自動保存（チェックボックス以外）
+            change_handlers = [
+                self.pretrained_model_name_or_path,
+                self.train_data_dir,
+                self.output_name,
+                self.output_dir,
+                self.learning_rate,
+                self.text_encoder_lr,
+                self.network_dim,
+                self.network_alpha,
+                self.epoch,
+                self.max_train_steps,
+                self.max_resolution,
+                self.train_batch_size,
+                self.save_model_as,
+                self.save_precision
+            ]
+            
+            # 値変更時に自動でconfig.tomlに保存
+            for component in change_handlers:
+                component.change(
+                    fn=self.auto_save_config,
+                    inputs=[auto_save_flag] + self._get_all_inputs(),
+                    outputs=[self.output_log],
+                    show_progress=False
+                )
+            
+            # チェックボックスも同様に自動保存
+            self.cache_latents.change(
+                fn=self.auto_save_config,
+                inputs=[auto_save_flag] + self._get_all_inputs(),
+                outputs=[self.output_log],
+                show_progress=False
+            )
+            self.cache_latents_to_disk.change(
+                fn=self.auto_save_config,
+                inputs=[auto_save_flag] + self._get_all_inputs(),
+                outputs=[self.output_log],
+                show_progress=False
+            )
+            
+            # 学習開始ボタン
             self.train_button.click(
                 fn=self.start_training,
                 inputs=self._get_all_inputs(),
                 outputs=[self.output_log],
                 show_progress=True
             )
+    
+    def auto_save_config(self, *args):
+        """値が変更されたときに自動でconfig.tomlに保存"""
+        try:
+            # args[0] は explicit_save フラグ（False想定）
+            result = self.save_config(*args)
+            # 空文字列が返った場合（正常なオートセーブ）は成功メッセージ
+            if result == "":
+                return "✓ Auto-saved"
+            # エラーの場合はそのまま返す
+            elif "エラー" in result or "失敗" in result:
+                return result
+            # 明示的保存の成功メッセージもそのまま返す
+            else:
+                return result
+        except Exception as e:
+            return f"自動保存エラー: {str(e)}"
     
     def _get_all_inputs(self):
         """すべての入力要素をリストで返す（train_model関数の引数順）"""
@@ -298,6 +423,65 @@ class SDXLSimpleTab:
             
         except Exception as e:
             error_msg = f"エラー: {str(e)}"
+            log.error(error_msg)
+            return error_msg
+    
+    def save_config(self, explicit_save: bool, *args):
+        """設定値をconfig.tomlに保存
+
+        Args:
+            explicit_save: True の場合は明示保存としてメッセージを返す
+        """
+        try:
+            import toml
+            
+            is_explicit_save = bool(explicit_save)
+            
+            # 現在の設定値を取得
+            config_data = {
+                'model': {
+                    'pretrained_model_name_or_path': args[0] if args[0] else '',
+                    'save_model_as': args[12],
+                    'save_precision': args[13]
+                },
+                'training_data': {
+                    'train_data_dir': args[1] if args[1] else '',
+                    'max_resolution': str(args[8]) if args[8] else "512,512",
+                    'train_batch_size': int(args[9]) if args[9] else 1
+                },
+                'training_params': {
+                    'learning_rate': float(args[4]) if args[4] else 0.0001,
+                    'text_encoder_lr': float(args[5]) if args[5] else 0.00005,
+                    'network_dim': int(args[6]) if args[6] else 16,
+                    'network_alpha': int(args[7]) if args[7] else 16,
+                    'epoch': int(args[10]) if args[10] else 6,
+                    'max_train_steps': int(args[11]) if args[11] else 1600,
+                    'cache_latents': bool(args[14]) if args[14] is not None else True,
+                    'cache_latents_to_disk': bool(args[15]) if args[15] is not None else True
+                },
+                'output': {
+                    'output_name': args[2] if args[2] else '',
+                    'output_dir': args[3] if args[3] else './outputs'
+                }
+            }
+            
+            # TOMLファイルに書き込み
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                f.write("# SDXL Face LoRA Minimal Configuration\n")
+                f.write("# SDXL顔LoRA学習用のユーザー設定\n")
+                f.write("# このファイルを編集して、UIの初期値をカスタマイズできます\n\n")
+                toml.dump(config_data, f)
+            
+            log.info(f"Settings saved to {self.config_path}")
+            
+            # 明示的な保存かオートセーブかでメッセージを変える
+            if is_explicit_save:
+                return "設定をconfig.tomlに保存しました"
+            else:
+                return ""  # オートセーブの場合はメッセージを表示しない
+            
+        except Exception as e:
+            error_msg = f"設定の保存に失敗しました: {str(e)}"
             log.error(error_msg)
             return error_msg
     
