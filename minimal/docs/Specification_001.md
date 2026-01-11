@@ -58,6 +58,47 @@ kohya-ss の既存GUIは非常に高機能だが、
 
 という位置づけ。
 
+### 3.1 「Start Training」ボタンの挙動（設計思想）
+
+**Minimalタブの「Start Training」ボタンは、LoRAタブのTrainingタブの「Start Training」ボタンの挙動を模倣する。**
+
+これは、Minimalタブの設計思想を実現するための重要な要件です。
+
+#### 処理フロー
+
+Minimalタブの「Start Training」ボタン押下時の処理フロー：
+
+1. **Minimalタブの「Start Training」押下**
+   - MinimalタブのUIから16個のパラメータを取得
+
+2. **Minimalパラメータ生成**
+   - MinimalタブのUI入力値から、16個のパラメータを生成
+
+3. **Trainingパラメータ生成**
+   - 既存のTrainingタブと同じように、全243個のパラメータをデフォルト値で生成
+   - Trainingタブの `settings_list` 構築ロジックと同じ方法で、デフォルト値を生成
+
+4. **Minimalパラメータマージ**
+   - Trainingパラメータ（243個）に、Minimalパラメータ（16個）を上書き
+   - Minimalタブで設定した値が優先される
+
+5. **settings_list の構築**
+   - マージ後のパラメータセットから、Trainingタブと同じ順序で `settings_list` を構築
+
+6. **トレーニング開始**
+   - 既存の `train_model` 関数を、Trainingタブと同じ方法で呼び出す
+   - 以降の処理（バリデーション、コマンド構築、プロセス起動）は、Trainingタブと同じフロー
+
+#### 設計思想との整合性
+
+この実装パターンは、以下の設計思想と完全に合致しています：
+
+- **既存の学習方式をそのまま使う**: `train_model` 関数は既存のまま使用
+- **GUI拡張レイヤにのみ存在**: パラメータ生成部分のみを置き換える
+- **いつでも切り捨て可能**: Trainingタブと同じ実装パターンなので、理解しやすく保守しやすい
+
+詳細は [Design_Requirement_001.md](Design_Requirement_001.md) を参照してください。
+
 ---
 
 ## 4. タブの対象範囲（スコープ）

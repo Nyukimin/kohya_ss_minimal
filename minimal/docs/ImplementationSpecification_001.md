@@ -36,6 +36,20 @@
 * 新しい学習方式を追加するものではない
 * **既存の kohya-ss 学習方式を安全に使うための補助UI**
 
+### 2.3 「Start Training」ボタンの挙動（設計思想）
+
+**Minimalタブの「Start Training」ボタンは、LoRAタブのTrainingタブの「Start Training」ボタンの挙動を模倣する。**
+
+この設計思想により、以下の利点が得られます：
+
+1. **一貫性**: Trainingタブと同じ実装パターンを使用することで、コードの一貫性が保たれる
+2. **保守性**: `train_model` 関数のシグネチャが変更されても、自動的に対応される
+3. **理解しやすさ**: 既存のTrainingタブと同じ実装パターンなので、他の開発者も理解しやすい
+4. **メンテナンス性**: 手動マッピングの更新が不要
+5. **処理フローの明確化**: Trainingタブの処理フローを分解し、Minimalタブは「パラメータ生成部分」のみを置き換える
+
+詳細な処理フローは「8. 学習実行時の処理フロー」を参照してください。
+
 ---
 
 ## 3. ディレクトリ構成（提案）
@@ -235,11 +249,97 @@ resolution = [512, 512]
 
 ## 8. 学習実行時の処理フロー
 
-1. UI入力を custom_state に保存
-2. 「学習開始」押下
-3. dataset_config.toml を生成
-4. pretrained_model を UI値で上書き
-5. 既存 kohya-ss の学習実行処理を呼び出す
+### 8.1 設計思想
+
+**Minimalタブの「Start Training」ボタンは、LoRAタブのTrainingタブの「Start Training」ボタンの挙動を模倣する。**
+
+これは、Minimalタブの設計思想を実現するための重要な要件です。既存のTrainingタブと同じ実装パターンを使用することで、コードの一貫性と保守性を確保します。
+
+### 8.2 処理フローの詳細
+
+Minimalタブの「Start Training」ボタン押下時の処理フロー：
+
+1. **Minimalタブの「Start Training」押下**
+   - MinimalタブのUIから16個のパラメータを取得
+   - UI入力値を検証
+
+2. **Minimalパラメータ生成**
+   - MinimalタブのUI入力値から、16個のパラメータを辞書形式で生成
+   - 例: `pretrained_model_name_or_path`, `train_data_dir`, `output_name`, `output_dir`, `learning_rate`, `text_encoder_lr`, `network_dim`, `network_alpha`, `epoch`, `max_train_steps`, `max_resolution`, `train_batch_size`, `cache_latents`, `cache_latents_to_disk`, `save_model_as`, `save_precision`
+
+3. **Trainingパラメータ生成**
+   - 既存のTrainingタブと同じように、全243個のパラメータをデフォルト値で生成
+   - Trainingタブの `settings_list` 構築ロジック（`kohya_gui/lora_gui.py` 2800行目以降）と同じ方法で、デフォルト値を生成
+   - SDXL顔LoRA用の最適化済みデフォルト値を使用
+
+4. **Minimalパラメータマージ**
+   - Trainingパラメータ（243個、辞書形式）に、Minimalパラメータ（16個、辞書形式）を上書き
+   - `final_params = {**training_params, **minimal_params}` の形式
+   - Minimalタブで設定した値が優先される
+   - マージ後のパラメータセット（243個）が完成
+
+5. **settings_list の構築**
+   - マージ後のパラメータセットから、Trainingタブと同じ順序で `settings_list` を構築
+   - `kohya_gui/lora_gui.py` 2800行目以降の `settings_list` 構築ロジックを関数化して再利用
+   - `settings_list` の順序は、Trainingタブの `settings_list` 構築ロジックと同じ順序を維持
+
+6. **トレーニング開始**
+   - 既存の `train_model` 関数を、Trainingタブと同じ方法で呼び出す
+   - `train_model(headless, print_only, *settings_list)` の形式
+   - 以降の処理（バリデーション、コマンド構築、プロセス起動）は、Trainingタブと同じフロー
+
+### 8.3 Trainingタブとの比較
+
+#### Trainingタブの処理フロー
+
+```
+Trainingタブの「Start Training」押下
+    ↓
+settings_list（243個のパラメータ）が既に構築済み
+    ↓
+train_model(headless, print_only, *settings_list) を呼び出し
+    ↓
+train_model関数内で：
+  - バリデーション処理
+  - 設定の計算と準備
+  - コマンドの構築
+  - プロセス起動
+```
+
+#### Minimalタブの処理フロー（実装要件）
+
+```
+Minimalタブの「Start Training」押下
+    ↓
+Minimalパラメータ生成（16個）
+    ↓
+Trainingパラメータ生成（243個、デフォルト値）
+    ↓
+Minimalパラメータマージ（TrainingパラメータにMinimalパラメータを上書き）
+    ↓
+settings_list を構築（Trainingタブと同じ順序）
+    ↓
+train_model(headless, print_only, *settings_list) を呼び出し
+    ↓
+train_model関数内で：
+  - バリデーション処理（Trainingタブと同じ）
+  - 設定の計算と準備（Trainingタブと同じ）
+  - コマンドの構築（Trainingタブと同じ）
+  - プロセス起動（Trainingタブと同じ）
+```
+
+### 8.4 実装上の注意事項
+
+- **UIコンポーネントの構築**: Minimalタブでは、UIコンポーネントを全て構築する必要はない（パラメータ値のみを扱う）
+- **デフォルト値の生成**: Trainingパラメータの生成は、既存のTrainingタブの実装パターンを再利用
+- **settings_list の構築**: `settings_list` の構築は、既存の `lora_gui.py` のロジックを関数化して再利用
+- **順序の維持**: `settings_list` の順序は、Trainingタブの `settings_list` 構築ロジック（2800行目以降）と同じ順序を維持する必要がある
+
+### 8.5 関連ドキュメント
+
+- **設計要件の詳細**: [Design_Requirement_001.md](Design_Requirement_001.md)
+- **実装アプローチの詳細**: [AlternativeApproach.md](AlternativeApproach.md)
+- **Trainingタブの挙動調査**: [investigation/lora_start_training_flow.md](investigation/lora_start_training_flow.md)
 
 ---
 
