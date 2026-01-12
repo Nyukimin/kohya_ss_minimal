@@ -1,7 +1,9 @@
 import subprocess
 import psutil
 import time
+import threading
 import gradio as gr
+from collections import deque
 
 from .custom_logging import setup_logging
 
@@ -20,6 +22,9 @@ class CommandExecutor:
         """
         self.headless = headless
         self.process = None
+        self.output_buffer = deque(maxlen=500)  # 最大500行のログを保持
+        self.output_lock = threading.Lock()
+        self._reader_thread = None
         
         with gr.Row():
             self.button_run = gr.Button("Start training", variant="primary")
@@ -39,16 +44,57 @@ class CommandExecutor:
         if self.process and self.process.poll() is None:
             log.info("The command is already running. Please wait for it to finish.")
         else:
-            # for i, item in enumerate(run_cmd):
-            #     log.info(f"{i}: {item}")
+            # Clear output buffer
+            with self.output_lock:
+                self.output_buffer.clear()
 
             # Reconstruct the safe command string for display
             command_to_run = " ".join(run_cmd)
             log.info(f"Executing command: {command_to_run}")
 
+            # 出力キャプチャを無効化（元の動作）
+            # 注: 出力はコンソールに直接表示され、UIには表示されません
+            # kwargs.setdefault('stdout', subprocess.PIPE)
+            # kwargs.setdefault('stderr', subprocess.STDOUT)
+            # kwargs.setdefault('bufsize', 1)
+            # kwargs.setdefault('universal_newlines', True)
+            # kwargs.setdefault('encoding', 'utf-8')
+            # kwargs.setdefault('errors', 'replace')
+
             # Execute the command securely
             self.process = subprocess.Popen(run_cmd, **kwargs)
             log.debug("Command executed.")
+            
+            # Background thread disabled (output capture is off)
+            # self._reader_thread = threading.Thread(target=self._read_output, daemon=True)
+            # self._reader_thread.start()
+    
+    def _read_output(self):
+        """Background thread to read process output."""
+        try:
+            if self.process and self.process.stdout:
+                for line in iter(self.process.stdout.readline, ''):
+                    if not line:
+                        break
+                    line = line.rstrip('\n\r')
+                    # ログにも出力
+                    print(line)
+                    # バッファに追加
+                    with self.output_lock:
+                        self.output_buffer.append(line)
+        except Exception as e:
+            log.debug(f"Output reader error: {e}")
+        finally:
+            if self.process and self.process.stdout:
+                self.process.stdout.close()
+    
+    def get_output(self, last_n_lines: int = 50) -> str:
+        """Get the last N lines of output."""
+        with self.output_lock:
+            lines = list(self.output_buffer)
+            if last_n_lines > 0:
+                lines = lines[-last_n_lines:]
+            return '\n'.join(lines)
 
     def kill_command(self):
         """

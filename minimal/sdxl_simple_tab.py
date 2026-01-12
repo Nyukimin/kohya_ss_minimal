@@ -277,14 +277,43 @@ class SDXLSimpleTab:
                         scale=1
                     )
                 
-                self.output_log = gr.Textbox(
-                    label="Training output",
+                # hidden の状態変数（ボタン状態管理用）
+                import time
+                self.run_state = gr.Textbox(value=str(time.time()), visible=False)
+                
+                # トレーニングサマリー（開始時に表示）
+                self.training_summary = gr.Textbox(
+                    label="Training Summary",
                     value="",
-                    lines=15,
-                    max_lines=30,
+                    lines=8,
+                    max_lines=12,
                     interactive=False,
                     show_copy_button=True
                 )
+                
+                # エポック統計（リアルタイム更新）
+                self.epoch_stats = gr.Textbox(
+                    label="📈 Epoch Statistics (Loss & Time)",
+                    value="Training not started yet...",
+                    lines=6,
+                    max_lines=10,
+                    interactive=False,
+                    show_copy_button=True
+                )
+                
+                # リアルタイム進捗ログ
+                self.output_log = gr.Textbox(
+                    label="Training Progress (Live)",
+                    value="Waiting for training to start...",
+                    lines=10,
+                    max_lines=15,
+                    interactive=False,
+                    show_copy_button=True,
+                    autoscroll=True
+                )
+                
+                # 定期更新用タイマー（1秒間隔）
+                self.progress_timer = gr.Timer(value=1, active=False)
             
             # イベント接続
             # フォルダ選択ボタン
@@ -362,12 +391,204 @@ class SDXLSimpleTab:
             )
             
             # 学習開始ボタン
+            # start_training() は (train_button, stop_button, run_state, training_summary, timer) を返す
+            from kohya_gui.lora_gui import executor
+            
             self.train_button.click(
                 fn=self.start_training,
                 inputs=self._get_all_inputs(),
-                outputs=[self.output_log],
+                outputs=[self.train_button, self.stop_button, self.run_state, self.training_summary, self.progress_timer],
                 show_progress=True
             )
+            
+            # タイマーで定期的に進捗ログを更新
+            # タイマーで定期的に進捗ログとエポック統計を更新
+            self.progress_timer.tick(
+                fn=self._update_progress_log,
+                outputs=[self.output_log, self.epoch_stats, self.progress_timer],
+                show_progress=False
+            )
+            
+            # run_state が変更されたら、トレーニング終了を待ってボタン状態を復元
+            self.run_state.change(
+                fn=self._wait_and_stop_timer,
+                outputs=[self.train_button, self.stop_button, self.progress_timer, self.output_log, self.epoch_stats],
+                show_progress=False
+            )
+            
+            # 学習停止ボタン
+            self.stop_button.click(
+                fn=self._stop_training,
+                outputs=[self.train_button, self.stop_button, self.progress_timer, self.output_log, self.epoch_stats],
+                show_progress=False
+            )
+    
+    def _parse_epoch_stats(self, full_output: str) -> str:
+        """ログからエポックごとの統計情報を抽出"""
+        import re
+        
+        lines = full_output.split('\n')
+        epoch_stats = []
+        current_epoch = 0
+        epoch_losses = {}
+        epoch_times = {}
+        start_time = None
+        last_epoch_time = None
+        
+        for line in lines:
+            # エポック開始を検出: "epoch 1/6" パターン
+            epoch_match = re.search(r'epoch\s+(\d+)/(\d+)', line, re.IGNORECASE)
+            if epoch_match:
+                new_epoch = int(epoch_match.group(1))
+                if new_epoch != current_epoch:
+                    if current_epoch > 0 and last_epoch_time:
+                        # 前のエポックの時間を記録
+                        import time
+                        now = time.time()
+                        if current_epoch not in epoch_times:
+                            epoch_times[current_epoch] = now - last_epoch_time
+                    current_epoch = new_epoch
+                    import time
+                    last_epoch_time = time.time()
+            
+            # loss値を検出: "loss: 0.0543" または "loss=0.0543" パターン
+            loss_match = re.search(r'loss[:\s=]+([0-9.]+)', line, re.IGNORECASE)
+            if loss_match and current_epoch > 0:
+                loss_val = float(loss_match.group(1))
+                if current_epoch not in epoch_losses:
+                    epoch_losses[current_epoch] = []
+                epoch_losses[current_epoch].append(loss_val)
+            
+            # ステップ進捗を検出: "step 100/450" または進捗バー
+            step_match = re.search(r'(\d+)/(\d+)\s*\[', line)
+            if step_match:
+                current_step = int(step_match.group(1))
+                total_steps = int(step_match.group(2))
+        
+        # 統計情報を生成
+        if not epoch_losses and current_epoch == 0:
+            return ""
+        
+        stats_lines = [
+            "",
+            "📈 Epoch Statistics:",
+            "-" * 40
+        ]
+        
+        for epoch in sorted(epoch_losses.keys()):
+            losses = epoch_losses[epoch]
+            avg_loss = sum(losses) / len(losses) if losses else 0
+            min_loss = min(losses) if losses else 0
+            max_loss = max(losses) if losses else 0
+            
+            time_str = ""
+            if epoch in epoch_times:
+                mins = int(epoch_times[epoch] // 60)
+                secs = int(epoch_times[epoch] % 60)
+                time_str = f" | Time: {mins}m {secs}s"
+            
+            stats_lines.append(
+                f"  Epoch {epoch}: Avg Loss={avg_loss:.4f} (Min={min_loss:.4f}, Max={max_loss:.4f}){time_str}"
+            )
+        
+        # 現在のエポック情報
+        if current_epoch > 0:
+            stats_lines.append(f"\n🔄 Current: Epoch {current_epoch}")
+        
+        return '\n'.join(stats_lines)
+    
+    def _update_progress_log(self):
+        """タイマーで呼び出され、executorの出力を取得してUIを更新"""
+        from kohya_gui.lora_gui import executor
+        
+        if executor.is_running():
+            output = executor.get_output(last_n_lines=50)  # より多くのログを表示
+            full_output = executor.get_output(last_n_lines=500)  # 統計用に全ログ取得
+            epoch_stats = self._parse_epoch_stats(full_output)
+            
+            if output:
+                return (
+                    gr.Textbox(value=output),
+                    gr.Textbox(value=epoch_stats) if epoch_stats else gr.Textbox(),
+                    gr.Timer(active=True)
+                )
+            else:
+                return (
+                    gr.Textbox(value="Training in progress..."),
+                    gr.Textbox(),
+                    gr.Timer(active=True)
+                )
+        else:
+            # トレーニング終了
+            output = executor.get_output(last_n_lines=30)
+            full_output = executor.get_output(last_n_lines=500)
+            epoch_stats = self._parse_epoch_stats(full_output)
+            
+            # 終了コードを確認
+            exit_code = executor.process.poll() if executor.process else None
+            if exit_code is not None and exit_code != 0:
+                final_msg = output + f"\n\n❌ Training failed! (Exit code: {exit_code})"
+                status_msg = "❌ Error" if not epoch_stats else epoch_stats + f"\n\n❌ Error (code: {exit_code})"
+            else:
+                final_msg = output + "\n\n✅ Training completed!" if output else "✅ Training completed!"
+                status_msg = epoch_stats + "\n\n✅ Complete!" if epoch_stats else ""
+            
+            return (
+                gr.Textbox(value=final_msg),
+                gr.Textbox(value=status_msg) if status_msg else gr.Textbox(),
+                gr.Timer(active=False)
+            )
+    
+    def _wait_and_stop_timer(self):
+        """トレーニング終了を待ってタイマーを停止し、ボタン状態を復元"""
+        from kohya_gui.lora_gui import executor
+        
+        while executor.is_running():
+            import time
+            time.sleep(1)
+        
+        # 最終出力を取得
+        output = executor.get_output(last_n_lines=30)
+        full_output = executor.get_output(last_n_lines=500)
+        epoch_stats = self._parse_epoch_stats(full_output)
+        
+        # 終了コードを確認
+        exit_code = executor.process.poll() if executor.process else None
+        if exit_code is not None and exit_code != 0:
+            final_msg = output + f"\n\n❌ Training failed! (Exit code: {exit_code})"
+            status_msg = "❌ Error" if not epoch_stats else epoch_stats + f"\n\n❌ Error (code: {exit_code})"
+        else:
+            final_msg = output + "\n\n✅ Training completed!" if output else "✅ Training completed!"
+            status_msg = epoch_stats + "\n\n✅ Complete!" if epoch_stats else ""
+        
+        return (
+            gr.Button(visible=True),   # train_button
+            gr.Button(visible=False),  # stop_button
+            gr.Timer(active=False),    # timer
+            gr.Textbox(value=final_msg),  # output_log
+            gr.Textbox(value=status_msg) if status_msg else gr.Textbox()  # epoch_stats
+        )
+    
+    def _stop_training(self):
+        """トレーニングを停止"""
+        from kohya_gui.lora_gui import executor
+        
+        # 停止前に統計を取得
+        full_output = executor.get_output(last_n_lines=500)
+        epoch_stats = self._parse_epoch_stats(full_output)
+        
+        executor.kill_command()
+        
+        output = executor.get_output(last_n_lines=30)
+        final_msg = output + "\n\n⚠️ Training stopped by user." if output else "⚠️ Training stopped by user."
+        
+        return (
+            gr.Button(visible=True),   # train_button
+            gr.Button(visible=False),  # stop_button
+            gr.Timer(active=False),    # timer
+            gr.Textbox(value=final_msg),  # output_log
+            gr.Textbox(value=epoch_stats + "\n\n⚠️ Stopped") if epoch_stats else gr.Textbox()  # epoch_stats
+        )
     
     def _get_all_inputs(self):
         """すべての入力要素をリストで返す（train_model関数の引数順）"""
@@ -1006,16 +1227,28 @@ class SDXLSimpleTab:
         4. settings_list を構築（train_model関数の引数順序と完全に一致）
         5. train_model() 関数を既存と同じ方法で呼び出す
         """
+        import time
+        
+        # エラー時の戻り値ヘルパー（train_button表示、stop_button非表示、timer停止）
+        def error_return(msg):
+            return (
+                gr.Button(visible=True),   # train_button を表示
+                gr.Button(visible=False),  # stop_button を非表示
+                gr.Textbox(),              # run_state（変更なし）
+                gr.Textbox(value=msg),     # training_summary: エラーメッセージ
+                gr.Timer(active=False)     # timer: 停止
+            )
+        
         try:
             # 入力検証
             if not pretrained_model_name_or_path:
-                return "エラー: チェックポイントパスが必要です"
+                return error_return("エラー: チェックポイントパスが必要です")
             if not train_data_dir or not os.path.exists(train_data_dir):
-                return "エラー: 有効な画像フォルダが必要です"
+                return error_return("エラー: 有効な画像フォルダが必要です")
             if not output_name:
-                return "エラー: 出力名が必要です"
+                return error_return("エラー: 出力名が必要です")
             if not output_dir:
-                return "エラー: 出力フォルダが必要です"
+                return error_return("エラー: 出力フォルダが必要です")
             
             # ステップ1: Minimalパラメータ生成（16個）
             minimal_params = self._generate_minimal_params(
@@ -1043,29 +1276,147 @@ class SDXLSimpleTab:
             # ステップ3: Minimalパラメータマージ
             final_params = self._merge_params(training_defaults, minimal_params)
             
-            # text_encoder_lrとlearning_rateが異なる場合、down_lr_weightとup_lr_weightを設定
-            if float(text_encoder_lr) != float(learning_rate):
-                # Text EncoderとU-Netで異なる学習率を使用する場合
-                final_params['down_lr_weight'] = str(float(text_encoder_lr))
-                final_params['up_lr_weight'] = str(float(learning_rate))
+            # 注: down_lr_weight/up_lr_weight はU-Netブロック単位の学習率重み設定用。
+            #     SDXLでは9個のブロックに対応したカンマ区切りリストが必要。
+            #     Text Encoder学習率は text_encoder_lr パラメータで別途設定済み。
+            #     ここでは追加のブロック単位制御は行わない。
             
             # ステップ4: settings_list を構築（train_model関数の引数順序と完全に一致）
             settings_list = self._build_settings_list(final_params)
             
-            # ステップ5: train_model() 関数を既存と同じ方法で呼び出す
-            from kohya_gui.lora_gui import train_model
-            result = train_model(
-                headless=self.headless,
-                print_only=False,
-                *settings_list
+            # パラメータ数の検証（headlessとprint_onlyを除く229個）
+            import inspect
+            from kohya_gui.lora_gui import train_model as tm_check
+            expected_count = len(inspect.signature(tm_check).parameters) - 2  # headless, print_only を除く
+            actual_count = len(settings_list)
+            log.info(f"Parameter count verification: expected={expected_count}, actual={actual_count}")
+            if actual_count != expected_count:
+                log.warning(f"Parameter count mismatch! Expected {expected_count}, got {actual_count}")
+            
+            # トレーニング情報のサマリーを生成
+            training_summary = self._generate_training_summary(
+                pretrained_model_name_or_path,
+                train_data_dir,
+                output_name,
+                output_dir,
+                learning_rate,
+                text_encoder_lr,
+                network_dim,
+                network_alpha,
+                epoch,
+                max_train_steps,
+                max_resolution,
+                train_batch_size,
+                cache_latents,
+                cache_latents_to_disk
             )
             
-            return result if result else "学習が完了しました"
+            # ステップ5: train_model() 関数を既存と同じ方法で呼び出す
+            # headless, print_only は位置引数として渡す（キーワード引数だと*settings_listと競合）
+            from kohya_gui.lora_gui import train_model
+            result = train_model(
+                self.headless,  # 位置引数: headless
+                False,          # 位置引数: print_only
+                *settings_list  # 残りの229個の位置引数
+            )
+            
+            # train_model は (train_button, stop_button, run_state_value) のタプルを返す
+            if result:
+                train_btn, stop_btn, run_state_textbox = result
+                return (
+                    train_btn,
+                    stop_btn,
+                    run_state_textbox,  # run_state: 状態管理用
+                    gr.Textbox(value=training_summary),  # training_summary: サマリー表示
+                    gr.Timer(active=True)  # timer: 進捗更新を開始
+                )
+            else:
+                return error_return("学習が完了しました")
             
         except Exception as e:
             error_msg = f"エラー: {str(e)}"
             log.error(error_msg, exc_info=True)
-            return error_msg
+            return error_return(error_msg)
+    
+    def _generate_training_summary(
+        self,
+        pretrained_model_name_or_path,
+        train_data_dir,
+        output_name,
+        output_dir,
+        learning_rate,
+        text_encoder_lr,
+        network_dim,
+        network_alpha,
+        epoch,
+        max_train_steps,
+        max_resolution,
+        train_batch_size,
+        cache_latents,
+        cache_latents_to_disk
+    ) -> str:
+        """トレーニング情報のサマリーを生成"""
+        import os
+        from datetime import datetime
+        
+        # 画像数をカウント
+        image_count = 0
+        repeats = 0
+        subfolder_name = ""
+        if train_data_dir and os.path.exists(train_data_dir):
+            for item in os.listdir(train_data_dir):
+                item_path = os.path.join(train_data_dir, item)
+                if os.path.isdir(item_path):
+                    subfolder_name = item
+                    # repeats_class 形式のフォルダ名からrepeats数を取得
+                    parts = item.split('_')
+                    if parts and parts[0].isdigit():
+                        repeats = int(parts[0])
+                    # 画像ファイルをカウント
+                    for file in os.listdir(item_path):
+                        if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
+                            image_count += 1
+                    break
+        
+        total_steps = image_count * repeats * int(epoch) if repeats > 0 else 0
+        effective_steps = min(total_steps, int(max_train_steps)) if int(max_train_steps) > 0 else total_steps
+        
+        lines = [
+            "=" * 50,
+            f"  🚀 Training Started - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "=" * 50,
+            "",
+            "📁 Model & Data:",
+            f"  • Checkpoint: {os.path.basename(pretrained_model_name_or_path)}",
+            f"  • Training folder: {subfolder_name}",
+            f"  • Images: {image_count} × {repeats} repeats = {image_count * repeats} steps/epoch",
+            f"  • Output: {output_name}",
+            "",
+            "⚙️ Training Parameters:",
+            f"  • Resolution: {max_resolution}",
+            f"  • Batch size: {train_batch_size}",
+            f"  • Epochs: {epoch}",
+            f"  • Max train steps: {max_train_steps if int(max_train_steps) > 0 else 'Unlimited'}",
+            f"  • Effective steps: ~{effective_steps}",
+            "",
+            "📊 Learning Rates:",
+            f"  • U-Net LR: {learning_rate}",
+            f"  • Text Encoder LR: {text_encoder_lr}",
+            "",
+            "🔧 LoRA Settings:",
+            f"  • Network dim (rank): {network_dim}",
+            f"  • Network alpha: {network_alpha}",
+            "",
+            "💾 Cache Settings:",
+            f"  • Cache latents: {cache_latents}",
+            f"  • Cache to disk: {cache_latents_to_disk}",
+            "",
+            "=" * 50,
+            "  Training in progress... Check console for details.",
+            "=" * 50,
+        ]
+        
+        return "\n".join(lines)
     
     def save_config(self, explicit_save: bool, *args):
         """設定値をconfig.tomlに保存
@@ -1203,15 +1554,11 @@ class SDXLSimpleTab:
             'network_alpha': int(network_alpha),
         }
         
-        # LoRA network引数を設定
-        # Text Encoder学習率の設定
-        if float(text_encoder_lr) != float(learning_rate):
-            # 異なる学習率を使用する場合
-            network_args = f'conv_dim={int(network_dim)} conv_alpha={int(network_alpha)} '
-            network_args += f'down_lr_weight={float(text_encoder_lr)} up_lr_weight={float(learning_rate)}'
-        else:
-            # 同じ学習率の場合はシンプルに
-            network_args = ''
+        # LoRA network引数を設定（シンプルなLoRA設定）
+        # 注: down_lr_weight/up_lr_weight はブロック単位の学習率制御用で、
+        #     SDXLでは9個のブロックに対応したリストが必要。
+        #     Text Encoder学習率は text_encoder_lr パラメータで設定済み。
+        network_args = ''  # シンプルなLoRA設定（追加引数なし）
         
         # 全設定をマージ
         final_config = {**defaults, **fixed, **ui_values}
