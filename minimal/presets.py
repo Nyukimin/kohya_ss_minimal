@@ -2,7 +2,8 @@
 # SDXL顔LoRA用の推奨設定値
 
 # config.tomlの設定を基にした最適化済み設定
-SDXL_FACE_LORA_DEFAULTS = {
+# システムのデフォルト値（固定）
+MINIMAL_DEFAULT_CONFIG = {
     # Model Source
     'v2': False,
     'v_parameterization': False,

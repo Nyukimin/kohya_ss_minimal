@@ -213,10 +213,10 @@ executor.button_run.click(
 # ただし、UIコンポーネントを構築するのはオーバーヘッドが大きい
 
 # 方法2: プリセット値から直接生成（推奨）
-# presets.pyのSDXL_FACE_LORA_DEFAULTSとSDXL_FACE_LORA_FIXEDを使用
-from minimal.presets import SDXL_FACE_LORA_DEFAULTS, SDXL_FACE_LORA_FIXED
+# presets.pyのMINIMAL_DEFAULT_CONFIGとSDXL_FACE_LORA_FIXEDを使用
+from minimal.presets import MINIMAL_DEFAULT_CONFIG, SDXL_FACE_LORA_FIXED
 
-default_params = {**SDXL_FACE_LORA_DEFAULTS, **SDXL_FACE_LORA_FIXED}
+default_params = {**MINIMAL_DEFAULT_CONFIG, **SDXL_FACE_LORA_FIXED}
 
 # 方法3: 既存のTrainingタブのsettings_list構築ロジックを再利用
 # lora_gui.pyのsettings_list構築部分を関数化して再利用

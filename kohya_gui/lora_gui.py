@@ -3100,10 +3100,16 @@ def lora_tab(
         lora_tools = LoRATools(headless=headless)
 
     # Add SDXL Simple tab
-    with gr.Tab("Minimal"):
+    with gr.Tab("Minimal") as minimal_tab:
         try:
             from minimal.sdxl_simple_tab import sdxl_simple_tab
-            sdxl_simple_tab(headless=headless, config=config, use_shell_flag=use_shell)
+            tab_instance = sdxl_simple_tab(headless=headless, config=config, use_shell_flag=use_shell)
+            # Tab.select() イベントをバインド - タブ選択時にCONFIGを読み込んでUIを更新
+            # Design_Requirement_002: DEFAULT→CONFIG上書きパターン
+            minimal_tab.select(
+                fn=tab_instance.load_and_update_ui,
+                outputs=tab_instance.get_ui_outputs()
+            )
         except ImportError:
             gr.Markdown("**SDXL Simple tab not available**")
             gr.Markdown("The minimal SDXL training interface is not installed.")

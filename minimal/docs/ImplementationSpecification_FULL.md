@@ -150,9 +150,9 @@ kohya_ss_minimal/
   - `learning_rate`
   - デフォルト: `0.0001` (1e-4)
 
-* **Text Encoder LR** (Number)
+* **Text Encoder LR** (Textbox)
   - `text_encoder_lr`
-  - デフォルト: `0.00005` (5e-5)
+  - デフォルト: `0.00005` (learning_rateの半分、指数表記ではなく小数表記で表示)
 
 * **LoRA Rank (dim)** (Number)
   - `network_dim`
@@ -176,7 +176,7 @@ kohya_ss_minimal/
 
 * **Cache latents to disk** (Checkbox)
   - `cache_latents_to_disk`
-  - デフォルト: `True`
+  - デフォルト: `False`（デフォルトOFF、ユーザーが変更した値は保持）
 
 #### Output Settings
 
@@ -197,6 +197,13 @@ with gr.Tab("Minimal"):
     
     with gr.Accordion("Training Data", open=True):
         # Image folder, Resolution, Train batch size
+    
+    with gr.Accordion("Caption Generation", open=False):
+        # Caption text (固定キャプションテキスト入力)
+        # Overwrite existing captions (チェックボックス)
+        # Generate caption files ボタン
+        # Caption generation result (結果表示)
+        # 注意: 画像フォルダ（Image folder）を自動的に使用
     
     with gr.Accordion("Training Parameters", open=True):
         # Learning rate, Text Encoder LR, LoRA Rank/Alpha, Epoch, Max train steps
@@ -289,9 +296,9 @@ minimal_params = {
 
 ```python
 # 方法1: プリセット値から直接生成（推奨）
-from minimal.presets import SDXL_FACE_LORA_DEFAULTS, SDXL_FACE_LORA_FIXED
+from minimal.presets import MINIMAL_DEFAULT_CONFIG, SDXL_FACE_LORA_FIXED
 
-training_params = {**SDXL_FACE_LORA_DEFAULTS, **SDXL_FACE_LORA_FIXED}
+training_params = {**MINIMAL_DEFAULT_CONFIG, **SDXL_FACE_LORA_FIXED}
 
 # 方法2: 既存のTrainingタブのsettings_list構築ロジックを再利用
 # lora_gui.pyのsettings_list構築部分を関数化して再利用
@@ -300,7 +307,7 @@ training_params = {**SDXL_FACE_LORA_DEFAULTS, **SDXL_FACE_LORA_FIXED}
 **SDXL顔LoRA用プリセット** (`minimal/presets.py`):
 
 ```python
-SDXL_FACE_LORA_DEFAULTS = {
+MINIMAL_DEFAULT_CONFIG = {
     'learning_rate': 0.0001,        # U-Net学習率
     'text_encoder_lr': 0.00005,     # Text Encoder学習率
     'network_dim': 16,             # LoRA rank（顔専用最適値）
@@ -463,7 +470,7 @@ def start_training(self, *minimal_args):
         }
         
         # 3. Trainingパラメータ生成（243個、デフォルト値）
-        from minimal.presets import SDXL_FACE_LORA_DEFAULTS, SDXL_FACE_LORA_FIXED
+        from minimal.presets import MINIMAL_DEFAULT_CONFIG, SDXL_FACE_LORA_FIXED
         training_params = generate_training_defaults()  # 全243個のデフォルト値生成
         
         # 4. Minimalパラメータマージ
@@ -544,7 +551,7 @@ output_dir = "./outputs"
 ### 7.1 プリセット値（`minimal/presets.py`）
 
 ```python
-SDXL_FACE_LORA_DEFAULTS = {
+MINIMAL_DEFAULT_CONFIG = {
     # 学習率設定（顔LoRA専用チューニング）
     'learning_rate': 0.0001,        # U-Net: 1e-4（安定学習）
     'text_encoder_lr': 0.00005,     # TextEnc: 5e-5（過学習防止）
@@ -626,33 +633,183 @@ class SDXLSimpleTab:
     def start_training(self, *args) -> str:
         """学習開始（最新設計思想に基づく実装）"""
         # 1. Minimalパラメータ生成（16個）
-        # 2. Trainingパラメータ生成（243個）
+        # 2. Trainingタブのデフォルト値を取得（UIコンポーネントの初期値、生成しない）
         # 3. Minimalパラメータマージ
-        # 4. settings_list 構築
+        # 4. settings_list 構築（train_model関数の引数順序と完全に一致）
         # 5. train_model() 呼び出し
         
     def _generate_minimal_params(self, *ui_args) -> dict:
         """Minimalパラメータ生成（16個）"""
         # UI入力値から16個のパラメータを辞書形式で生成
         
-    def _generate_training_params(self) -> dict:
-        """Trainingパラメータ生成（243個、デフォルト値）"""
-        # 既存のTrainingタブのデフォルト値生成ロジックを再利用
+    def _get_training_defaults(self) -> dict:
+        """Trainingタブのデフォルト値を取得（UIコンポーネントの初期値、生成しない）"""
+        # TrainingタブのUIコンポーネントの初期値をハードコード
+        # SDXL顔LoRA用の最適化済みデフォルト値を適用
         
-    def _merge_params(self, training_params: dict, minimal_params: dict) -> dict:
+    def _generate_minimal_params(self, *ui_args) -> dict:
+        """Minimalパラメータ生成（16個）"""
+        # UI入力値から16個のパラメータを辞書形式で生成
+        
+    def _merge_params(self, training_defaults: dict, minimal_params: dict) -> dict:
         """Minimalパラメータマージ"""
-        # TrainingパラメータにMinimalパラメータを上書き
+        # Trainingタブのデフォルト値にMinimalパラメータを上書き
+        # text_encoder_lrとlearning_rateが異なる場合、down_lr_weightとup_lr_weightを設定
         
     def _build_settings_list(self, params: dict) -> list:
-        """settings_list を構築（Trainingタブと同じ順序）"""
-        # lora_gui.py 2800行目以降のロジックを関数化して再利用
+        """settings_list を構築（train_model関数の引数順序と完全に一致）"""
+        # minimal/utils.py の build_settings_list_from_params() を呼び出し
+        # inspect.signature を使用して train_model 関数の引数順序を取得
         
     def _get_all_inputs(self) -> List[gr.Component]:
         """全UI要素のリスト取得"""
         # イベントバインディング用
+    
+    def generate_captions(
+        self,
+        caption_text: str,
+        train_data_dir: str,
+        overwrite: bool
+    ) -> str:
+        """
+        固定キャプションを全画像に一括生成
+        
+        Specification_001.md ⑥ Caption一括生成（重要）の要件を満たす
+        
+        Args:
+            caption_text: 固定キャプションテキスト
+            train_data_dir: 学習画像フォルダパス（Image folderで指定されたフォルダを自動使用）
+            overwrite: 既存キャプションを上書きするか
+            
+        Returns:
+            str: 生成結果メッセージ
+        """
+        # 1. 入力検証（キャプションテキスト、フォルダパスの存在確認）
+        # 2. 既存キャプションファイルの確認（上書き確認）
+        # 3. kohya_gui.basic_caption_gui.caption_images() を呼び出し
+        # 4. 生成結果の表示（画像ファイル数、キャプションファイル数）
 ```
 
-### 8.2 実装のポイント
+### 8.2 Caption生成機能の実装詳細
+
+#### 8.2.1 UIコンポーネント
+
+**実装場所**: `minimal/sdxl_simple_tab.py` 127-155行目
+
+```python
+# Caption Generation Accordion
+with gr.Accordion("Caption Generation", open=False):
+    gr.Markdown("**固定キャプションを全画像に一括生成** - 学習前の事故を防ぐための補助機能")
+    gr.Markdown("*画像フォルダ（Image folder）に指定されたフォルダに自動的にキャプションを生成します*")
+    
+    # Caption text
+    self.caption_text = gr.Textbox(
+        label="Caption text",
+        placeholder="例: character_name, face, portrait",
+        value=MINIMAL_USER_CONFIG.get('caption_text', ''),
+        info="全画像に適用する固定キャプションテキスト",
+        lines=2
+    )
+    
+    # Overwrite checkbox
+    self.caption_overwrite = gr.Checkbox(
+        label="Overwrite existing captions",
+        value=False,
+        info="既存の.txtファイルがある場合に上書きする（⚠️ 注意: 既存キャプションが失われます）"
+    )
+    
+    # Generate button & Result display
+    self.generate_captions_button = gr.Button(
+        "Generate caption files",
+        variant="secondary",
+        scale=1
+    )
+    self.caption_result = gr.Textbox(
+        label="Caption generation result",
+        value="",
+        interactive=False,
+        lines=3,
+        max_lines=5,
+        scale=2
+    )
+```
+
+**注意**: Caption folderのUIコンポーネントは削除され、`train_data_dir`（Image folder）が自動的に使用されます。
+
+#### 8.2.2 イベントハンドラ
+
+**実装場所**: `minimal/sdxl_simple_tab.py` 360-370行目
+
+```python
+# キャプション生成ボタン
+self.generate_captions_button.click(
+    fn=self.generate_captions,
+    inputs=[
+        self.caption_text,
+        self.train_data_dir,  # Image folderを自動使用
+        self.caption_overwrite
+    ],
+    outputs=[self.caption_result],
+    show_progress=True
+)
+```
+
+#### 8.2.3 generate_captions() メソッドの実装
+
+**実装場所**: `minimal/sdxl_simple_tab.py` 410-487行目
+
+**処理フロー**:
+1. **入力検証**
+   - キャプションテキストが空でないことを確認
+   - `train_data_dir`（Image folder）が指定されていることを確認
+   - フォルダが存在することを確認
+   - パスがディレクトリであることを確認
+
+2. **サブフォルダの自動検出（kohya_ssの仕様に準拠）**
+   - `train_data_dir`の下にあるサブフォルダを検索
+   - サブフォルダが0個の場合: エラーメッセージを返す
+   - サブフォルダが複数ある場合: エラーメッセージを返す（今回は1つのサブフォルダのみサポート）
+   - サブフォルダが1個の場合: そのサブフォルダを実際の画像フォルダとして使用
+   - 例: `training_data/5_SATOMI` が実際に使用されるフォルダ
+
+3. **既存キャプションファイルの確認**
+   - `overwrite=False` の場合、既存の`.txt`ファイルを検索
+   - 既存ファイルがある場合は警告メッセージを返す
+
+4. **caption_images() 関数の呼び出し**
+   - `kohya_gui.basic_caption_gui.caption_images()` をインポート
+   - 以下のパラメータで呼び出し:
+     - `caption_text`: 固定キャプションテキスト
+     - `images_dir`: 画像フォルダパス
+     - `overwrite`: 上書きフラグ
+     - `caption_ext`: ".txt"
+     - `prefix`, `postfix`, `find_text`, `replace_text`: 空文字列（固定キャプション生成のため）
+
+5. **生成結果の表示**
+   - 画像ファイル数をカウント（Jpeg系のみ: `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`）
+   - キャプションファイル数をカウント（`.txt`のみ）
+   - `os.listdir`でファイルを列挙し、拡張子で正確にフィルタリング
+   - 大文字小文字の違いも考慮（`.JPG`と`.jpg`の両方を認識）
+   - 結果メッセージを返す（「画像ファイル（Jpeg系）: X個」「キャプションファイル（.txt）: X個」）
+
+**kohya_ssのフォルダ構造仕様**:
+- `train_data_dir`（例: `training_data/`）は親フォルダ
+- その下にサブフォルダ（例: `5_SATOMI`）が1個存在する
+- 実際の画像はサブフォルダ内に配置される
+- Caption生成は、このサブフォルダに対して実行される
+
+**エラーハンドリング**:
+- すべてのエラーをキャッチし、エラーメッセージを返す
+- ログにエラー情報を記録
+
+#### 8.2.4 仕様要件との対応
+
+**Specification_001.md ⑥ Caption一括生成（重要）の要件**:
+- ✅ 固定 caption を全画像に一括生成
+- ✅ 既存 `.txt` がある場合は必ず上書き確認（`overwrite=False`の場合に警告表示）
+- ✅ 学習前の事故を防ぐための補助機能
+
+### 8.3 実装のポイント
 
 - **UIコンポーネントを構築する必要はない**: パラメータ値のみを扱う
 - **デフォルト値の生成**: 既存のTrainingタブの実装パターンを再利用

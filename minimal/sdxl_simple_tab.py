@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 # Minimal用プリセット設定を読み込み
 
 from minimal.presets import (
-    SDXL_FACE_LORA_DEFAULTS,
+    MINIMAL_DEFAULT_CONFIG,
     SDXL_FACE_LORA_FIXED,
     RESOLUTION_CHOICES,
     BATCH_SIZE_CHOICES,
@@ -18,26 +18,38 @@ from minimal.presets import (
     SAVE_PRECISION_CHOICES
 )
 
-# ユーザー設定をTOMLから読み込み（エラー時はデフォルト値を使用）
-try:
-    import toml
+# tomlモジュールをインポート
+import toml
+
+def load_user_config() -> dict:
+    """
+    config.tomlからユーザー設定を動的に読み込む
+    
+    Design_Requirement_002: Tab.select()時に呼び出され、
+    MINIMAL_DEFAULT_CONFIGに上書きして使用される
+    
+    Returns:
+        dict: ユーザー設定（フラット化済み）。読み込み失敗時は空の辞書
+    """
     config_path = Path(__file__).parent / "config.toml"
-    if config_path.exists():
-        config_data = toml.load(config_path)
-        # TOMLの階層構造をフラット化
-        USER_DEFAULTS = {
-            **config_data.get('model', {}),
-            **config_data.get('training_data', {}),
-            **config_data.get('training_params', {}),
-            **config_data.get('output', {})
-        }
-        log.info(f"Loaded user defaults from {config_path}")
-    else:
-        log.info("config.toml not found, using default values")
-        USER_DEFAULTS = {}
-except Exception as e:
-    log.warning(f"Failed to load config.toml: {e}")
-    USER_DEFAULTS = {}
+    try:
+        if config_path.exists():
+            config_data = toml.load(config_path)
+            # TOMLの階層構造をフラット化
+            user_config = {
+                **config_data.get('model', {}),
+                **config_data.get('training_data', {}),
+                **config_data.get('training_params', {}),
+                **config_data.get('output', {})
+            }
+            log.info(f"Loaded user config from {config_path}")
+            return user_config
+        else:
+            log.info("config.toml not found, using default values")
+            return {}
+    except Exception as e:
+        log.warning(f"Failed to load config.toml: {e}")
+        return {}
 
 # フォルダ選択機能をインポート
 from kohya_gui.common_gui import get_folder_path, get_file_path
@@ -70,7 +82,7 @@ class SDXLSimpleTab:
                     self.pretrained_model_name_or_path = gr.Textbox(
                         label="SDXL Checkpoint path",
                         placeholder="SDXLモデルのパス (.safetensors or .ckpt)",
-                        value=USER_DEFAULTS.get('pretrained_model_name_or_path', ''),
+                        value=MINIMAL_DEFAULT_CONFIG.get('pretrained_model_name_or_path', ''),
                         interactive=True,
                         scale=3
                     )
@@ -85,12 +97,12 @@ class SDXLSimpleTab:
                     self.save_model_as = gr.Dropdown(
                         label="Save trained model as",
                         choices=SAVE_MODEL_AS_CHOICES,
-                        value=USER_DEFAULTS.get('save_model_as', SDXL_FACE_LORA_DEFAULTS['save_model_as'])
+                        value=MINIMAL_DEFAULT_CONFIG.get('save_model_as', 'safetensors')
                     )
                     self.save_precision = gr.Dropdown(
                         label="Save precision", 
                         choices=SAVE_PRECISION_CHOICES,
-                        value=USER_DEFAULTS.get('save_precision', SDXL_FACE_LORA_DEFAULTS['save_precision'])
+                        value=MINIMAL_DEFAULT_CONFIG.get('save_precision', 'fp16')
                     )
             
             # Training Data
@@ -99,7 +111,7 @@ class SDXLSimpleTab:
                     self.train_data_dir = gr.Textbox(
                         label="Image folder",
                         placeholder="学習画像が含まれるフォルダ",
-                        value=USER_DEFAULTS.get('train_data_dir', ''),
+                        value=MINIMAL_DEFAULT_CONFIG.get('train_data_dir', ''),
                         interactive=True,
                         scale=3
                     )
@@ -114,14 +126,47 @@ class SDXLSimpleTab:
                     self.max_resolution = gr.Dropdown(
                         label="Resolution",
                         choices=RESOLUTION_CHOICES,
-                        value=USER_DEFAULTS.get('max_resolution', SDXL_FACE_LORA_DEFAULTS['max_resolution']),
+                        value=MINIMAL_DEFAULT_CONFIG.get('max_resolution', '512,512'),
                         info="学習解像度（顔LoRAは512x512推奨）"
                     )
                     self.train_batch_size = gr.Dropdown(
                         label="Batch size",
                         choices=BATCH_SIZE_CHOICES,
-                        value=USER_DEFAULTS.get('train_batch_size', SDXL_FACE_LORA_DEFAULTS['train_batch_size']),
+                        value=MINIMAL_DEFAULT_CONFIG.get('train_batch_size', 1),
                         info="バッチサイズ（1推奨）"
+                    )
+            
+            # Caption Generation
+            with gr.Accordion("Caption Generation", open=False):
+                gr.Markdown("**固定キャプションを全画像に一括生成** - 学習前の事故を防ぐための補助機能")
+                gr.Markdown("*画像フォルダ（Image folder）に指定されたフォルダに自動的にキャプションを生成します*")
+                with gr.Row():
+                    self.caption_text = gr.Textbox(
+                        label="Caption text",
+                        placeholder="例: character_name, face, portrait",
+                        value=MINIMAL_DEFAULT_CONFIG.get('caption_text', ''),
+                        info="全画像に適用する固定キャプションテキスト",
+                        lines=2
+                    )
+                with gr.Row():
+                    self.caption_overwrite = gr.Checkbox(
+                        label="Overwrite existing captions",
+                        value=False,
+                        info="既存の.txtファイルがある場合に上書きする（⚠️ 注意: 既存キャプションが失われます）"
+                    )
+                with gr.Row():
+                    self.generate_captions_button = gr.Button(
+                        "Generate caption files",
+                        variant="secondary",
+                        scale=1
+                    )
+                    self.caption_result = gr.Textbox(
+                        label="Caption generation result",
+                        value="",
+                        interactive=False,
+                        lines=3,
+                        max_lines=5,
+                        scale=2
                     )
             
             # Training Parameters  
@@ -129,19 +174,23 @@ class SDXLSimpleTab:
                 with gr.Row():
                     self.learning_rate = gr.Textbox(
                         label="Learning rate",
-                        value=str(USER_DEFAULTS.get('learning_rate', SDXL_FACE_LORA_DEFAULTS['learning_rate'])),
+                        value=str(MINIMAL_DEFAULT_CONFIG.get('learning_rate', 0.0001)),
                         info="学習率（U-Net用）"
                     )
+                    # Text encoder learning rateのデフォルト値を計算（指数表記を避けるため明示的にフォーマット）
+                    text_encoder_lr_default = MINIMAL_DEFAULT_CONFIG.get('text_encoder_lr', MINIMAL_DEFAULT_CONFIG.get('learning_rate', 0.0001) * 0.5)
+                    # 指数表記を避けて小数表記で表示（小数点以下5桁まで）
+                    text_encoder_lr_str = f"{float(text_encoder_lr_default):.5f}".rstrip('0').rstrip('.')
                     self.text_encoder_lr = gr.Textbox(
                         label="Text encoder learning rate",
-                        value=str(USER_DEFAULTS.get('text_encoder_lr', SDXL_FACE_LORA_DEFAULTS['learning_rate'] * 0.5)),  # 半分程度
+                        value=text_encoder_lr_str,
                         info="Text Encoder学習率"
                     )
                 
                 with gr.Row():
                     self.network_dim = gr.Number(
                         label="LoRA Rank (dim)",
-                        value=USER_DEFAULTS.get('network_dim', SDXL_FACE_LORA_DEFAULTS['network_dim']),
+                        value=MINIMAL_DEFAULT_CONFIG.get('network_dim', 16),
                         minimum=1,
                         maximum=128,
                         step=1,
@@ -149,7 +198,7 @@ class SDXLSimpleTab:
                     )
                     self.network_alpha = gr.Number(
                         label="LoRA Alpha",
-                        value=USER_DEFAULTS.get('network_alpha', SDXL_FACE_LORA_DEFAULTS['network_alpha']),
+                        value=MINIMAL_DEFAULT_CONFIG.get('network_alpha', 16),
                         minimum=1,
                         maximum=128,
                         step=1,
@@ -159,14 +208,14 @@ class SDXLSimpleTab:
                 with gr.Row():
                     self.epoch = gr.Number(
                         label="Epochs",
-                        value=USER_DEFAULTS.get('epoch', SDXL_FACE_LORA_DEFAULTS['epoch']),
+                        value=MINIMAL_DEFAULT_CONFIG.get('epoch', 6),
                         minimum=1,
                         maximum=100,
                         step=1
                     )
                     self.max_train_steps = gr.Number(
                         label="Max train steps",
-                        value=USER_DEFAULTS.get('max_train_steps', SDXL_FACE_LORA_DEFAULTS['max_train_steps']),
+                        value=MINIMAL_DEFAULT_CONFIG.get('max_train_steps', 1600),
                         minimum=0,
                         step=100,
                         info="0 = epoch数のみ使用"
@@ -175,12 +224,12 @@ class SDXLSimpleTab:
                 with gr.Row():
                     self.cache_latents = gr.Checkbox(
                         label="Cache latents",
-                        value=USER_DEFAULTS.get('cache_latents', SDXL_FACE_LORA_DEFAULTS['cache_latents']),
+                        value=MINIMAL_DEFAULT_CONFIG.get('cache_latents', True),
                         info="latentsをキャッシュして高速化"
                     )
                     self.cache_latents_to_disk = gr.Checkbox(
                         label="Cache latents to disk",
-                        value=USER_DEFAULTS.get('cache_latents_to_disk', SDXL_FACE_LORA_DEFAULTS['cache_latents_to_disk']),
+                        value=MINIMAL_DEFAULT_CONFIG.get('cache_latents_to_disk', False),
                         info="ディスクキャッシュでVRAM節約"
                     )
             
@@ -190,7 +239,7 @@ class SDXLSimpleTab:
                     self.output_name = gr.Textbox(
                         label="Output name",
                         placeholder="character_name_lora",
-                        value=USER_DEFAULTS.get('output_name', ''),
+                        value=MINIMAL_DEFAULT_CONFIG.get('output_name', ''),
                         info="出力するLoRAモデルの名前"
                     )
                 
@@ -198,7 +247,7 @@ class SDXLSimpleTab:
                     self.output_dir = gr.Textbox(
                         label="Output folder",
                         placeholder="出力フォルダ",
-                        value=USER_DEFAULTS.get('output_dir', './outputs'),
+                        value=MINIMAL_DEFAULT_CONFIG.get('output_dir', './outputs'),
                         scale=3
                     )
                     output_folder_button = gr.Button(
@@ -262,17 +311,18 @@ class SDXLSimpleTab:
             
             # 設定保存ボタン（明示保存フラグ付き）
             explicit_save_flag = gr.State(True)
-            auto_save_flag = gr.State(False)
 
             self.save_config_button.click(
-                fn=self.save_config,
+                fn=self.save_config_and_reset_button,
                 inputs=[explicit_save_flag] + self._get_all_inputs(),
-                outputs=[self.output_log],
+                outputs=[self.output_log, self.save_config_button],
                 show_progress=False
             )
             
-            # 値変更時に自動保存（チェックボックス以外）
-            change_handlers = [
+            # 自動保存は廃止（Design_Requirement_002）
+            # 代わりに、値変更時にSave Configボタンをハイライト表示
+            # Tab.select() による変更はスキップするため、config.toml と比較
+            change_components = [
                 self.pretrained_model_name_or_path,
                 self.train_data_dir,
                 self.output_name,
@@ -285,31 +335,30 @@ class SDXLSimpleTab:
                 self.max_train_steps,
                 self.max_resolution,
                 self.train_batch_size,
+                self.cache_latents,
+                self.cache_latents_to_disk,
                 self.save_model_as,
                 self.save_precision
             ]
             
-            # 値変更時に自動でconfig.tomlに保存
-            for component in change_handlers:
+            for component in change_components:
                 component.change(
-                    fn=self.auto_save_config,
-                    inputs=[auto_save_flag] + self._get_all_inputs(),
-                    outputs=[self.output_log],
+                    fn=self._check_config_changed,
+                    inputs=self._get_all_inputs(),
+                    outputs=[self.save_config_button],
                     show_progress=False
                 )
             
-            # チェックボックスも同様に自動保存
-            self.cache_latents.change(
-                fn=self.auto_save_config,
-                inputs=[auto_save_flag] + self._get_all_inputs(),
-                outputs=[self.output_log],
-                show_progress=False
-            )
-            self.cache_latents_to_disk.change(
-                fn=self.auto_save_config,
-                inputs=[auto_save_flag] + self._get_all_inputs(),
-                outputs=[self.output_log],
-                show_progress=False
+            # キャプション生成ボタン
+            self.generate_captions_button.click(
+                fn=self.generate_captions,
+                inputs=[
+                    self.caption_text,
+                    self.train_data_dir,
+                    self.caption_overwrite
+                ],
+                outputs=[self.caption_result],
+                show_progress=True
             )
             
             # 学習開始ボタン
@@ -319,23 +368,6 @@ class SDXLSimpleTab:
                 outputs=[self.output_log],
                 show_progress=True
             )
-    
-    def auto_save_config(self, *args):
-        """値が変更されたときに自動でconfig.tomlに保存"""
-        try:
-            # args[0] は explicit_save フラグ（False想定）
-            result = self.save_config(*args)
-            # 空文字列が返った場合（正常なオートセーブ）は成功メッセージ
-            if result == "":
-                return "✓ Auto-saved"
-            # エラーの場合はそのまま返す
-            elif "エラー" in result or "失敗" in result:
-                return result
-            # 明示的保存の成功メッセージもそのまま返す
-            else:
-                return result
-        except Exception as e:
-            return f"自動保存エラー: {str(e)}"
     
     def _get_all_inputs(self):
         """すべての入力要素をリストで返す（train_model関数の引数順）"""
@@ -359,6 +391,593 @@ class SDXLSimpleTab:
             self.save_precision
         ]
     
+    def _check_config_changed(self, *args):
+        """UIの値がconfig.tomlと異なるかチェックし、ボタンをハイライト
+        
+        Tab.select() による変更をスキップするため、config.toml と比較。
+        値が異なる場合のみハイライト表示する。
+        """
+        try:
+            # config.toml を読み込み
+            config = MINIMAL_DEFAULT_CONFIG.copy()
+            user_config = load_user_config()
+            config.update(user_config)
+            
+            
+            # UI値を取得
+            ui_values = {
+                'pretrained_model_name_or_path': args[0] if args[0] else '',
+                'train_data_dir': args[1] if args[1] else '',
+                'output_name': args[2] if args[2] is not None else '',
+                'output_dir': args[3] if args[3] is not None else './outputs',
+                'learning_rate': str(args[4]) if args[4] else '0.0001',
+                'text_encoder_lr': str(args[5]) if args[5] else '0.00005',
+                'network_dim': int(args[6]) if args[6] else 16,
+                'network_alpha': int(args[7]) if args[7] else 16,
+                'epoch': int(args[8]) if args[8] else 6,
+                'max_train_steps': int(args[9]) if args[9] else 1600,
+                'max_resolution': str(args[10]) if args[10] else '512,512',
+                'train_batch_size': int(args[11]) if args[11] else 1,
+                'cache_latents': bool(args[12]) if args[12] is not None else True,
+                'cache_latents_to_disk': bool(args[13]) if args[13] is not None else False,
+                'save_model_as': args[14] if args[14] else 'safetensors',
+                'save_precision': args[15] if args[15] else 'fp16'
+            }
+            
+            # 比較（一部の値は型を揃える）
+            is_changed = False
+            for key, ui_value in ui_values.items():
+                config_value = config.get(key, '')
+                
+                # 型を揃えて比較
+                if key in ['learning_rate', 'text_encoder_lr']:
+                    # 浮動小数点の比較
+                    try:
+                        ui_float = float(ui_value)
+                        config_float = float(config_value) if config_value else 0.0
+                        if abs(ui_float - config_float) > 1e-10:
+                            is_changed = True
+                            break
+                    except (ValueError, TypeError):
+                        is_changed = True
+                        break
+                elif isinstance(ui_value, bool):
+                    config_bool = bool(config_value) if config_value is not None else False
+                    if ui_value != config_bool:
+                        is_changed = True
+                        break
+                elif isinstance(ui_value, int):
+                    try:
+                        config_int = int(config_value) if config_value else 0
+                        if ui_value != config_int:
+                            is_changed = True
+                            break
+                    except (ValueError, TypeError):
+                        is_changed = True
+                        break
+                else:
+                    if str(ui_value) != str(config_value):
+                        is_changed = True
+                        break
+            
+            if is_changed:
+                return gr.update(value="💾 Save Config *", variant="primary")
+            else:
+                return gr.update(value="Save Config", variant="secondary")
+        except Exception as e:
+            log.warning(f"Config change check failed: {e}")
+            # エラー時はハイライトしない
+            return gr.update()
+    
+    def get_ui_outputs(self):
+        """Tab.select()のoutputsとして使用するUIコンポーネントのリストを返す"""
+        return [
+            self.pretrained_model_name_or_path,
+            self.train_data_dir,
+            self.output_name,
+            self.output_dir,
+            self.learning_rate,
+            self.text_encoder_lr,
+            self.network_dim,
+            self.network_alpha,
+            self.epoch,
+            self.max_train_steps,
+            self.max_resolution,
+            self.train_batch_size,
+            self.cache_latents,
+            self.cache_latents_to_disk,
+            self.save_model_as,
+            self.save_precision,
+            self.save_config_button  # タブ選択時にボタンをリセット
+        ]
+    
+    def load_and_update_ui(self):
+        """
+        タブ選択時にDEFAULT→CONFIGの順で読み込み、UIを更新
+        
+        設計原則:
+        - 常に同じシーケンス（DEFAULT→CONFIG上書き）を通る
+        - CONFIGの有無に関わらず同じコードパスを通ることでバグを減らす
+        
+        Returns:
+            tuple: gr.update()のタプル（get_ui_outputs()の順序と一致）
+        """
+        # 1. DEFAULTで初期化
+        config = MINIMAL_DEFAULT_CONFIG.copy()
+        
+        # 2. CONFIGで上書き
+        user_config = load_user_config()
+        config.update(user_config)
+        
+        log.info(f"UI updated with config: {len(user_config)} user settings applied")
+        
+        # 3. text_encoder_lr を小数表記でフォーマット
+        text_encoder_lr_value = config.get('text_encoder_lr', config.get('learning_rate', 0.0001) * 0.5)
+        text_encoder_lr_str = f"{float(text_encoder_lr_value):.5f}".rstrip('0').rstrip('.')
+        
+        # 4. gr.update()でUIを更新（get_ui_outputs()の順序と一致）
+        return (
+            gr.update(value=config.get('pretrained_model_name_or_path', '')),
+            gr.update(value=config.get('train_data_dir', '')),
+            gr.update(value=config.get('output_name', '')),
+            gr.update(value=config.get('output_dir', './outputs')),
+            gr.update(value=str(config.get('learning_rate', 0.0001))),
+            gr.update(value=text_encoder_lr_str),
+            gr.update(value=config.get('network_dim', 16)),
+            gr.update(value=config.get('network_alpha', 16)),
+            gr.update(value=config.get('epoch', 6)),
+            gr.update(value=config.get('max_train_steps', 1600)),
+            gr.update(value=config.get('max_resolution', '512,512')),
+            gr.update(value=config.get('train_batch_size', 1)),
+            gr.update(value=config.get('cache_latents', True)),
+            gr.update(value=config.get('cache_latents_to_disk', False)),
+            gr.update(value=config.get('save_model_as', 'safetensors')),
+            gr.update(value=config.get('save_precision', 'fp16')),
+            gr.update(value="Save Config", variant="secondary")  # ボタンをリセット
+        )
+    
+    def generate_captions(
+        self,
+        caption_text: str,
+        train_data_dir: str,
+        overwrite: bool
+    ) -> str:
+        """
+        固定キャプションを全画像に一括生成
+        
+        Specification_001.md ⑥ Caption一括生成（重要）の要件を満たす
+        
+        Args:
+            caption_text: 固定キャプションテキスト
+            train_data_dir: 学習画像フォルダパス（Image folderで指定されたフォルダを自動使用）
+            overwrite: 既存キャプションを上書きするか
+            
+        Returns:
+            str: 生成結果メッセージ
+        """
+        try:
+            # 入力検証
+            if not caption_text or not caption_text.strip():
+                return "エラー: キャプションテキストを入力してください"
+            
+            if not train_data_dir or not train_data_dir.strip():
+                return "エラー: 画像フォルダ（Image folder）を指定してください"
+            
+            # パスの正規化
+            train_data_dir_path = os.path.normpath(train_data_dir.strip())
+            
+            if not os.path.exists(train_data_dir_path):
+                return f"エラー: 指定されたフォルダが存在しません: {train_data_dir_path}"
+            
+            if not os.path.isdir(train_data_dir_path):
+                return f"エラー: 指定されたパスはフォルダではありません: {train_data_dir_path}"
+            
+            # kohya_ssの仕様: train_data_dirの下にあるサブフォルダ（1個）を自動検出
+            subfolders = [
+                f
+                for f in os.listdir(train_data_dir_path)
+                if os.path.isdir(os.path.join(train_data_dir_path, f))
+            ]
+            
+            if len(subfolders) == 0:
+                return f"エラー: {train_data_dir_path} の下にサブフォルダが見つかりません。kohya_ssの仕様に従い、サブフォルダ（例: 5_SATOMI）を作成してください。"
+            
+            if len(subfolders) > 1:
+                return f"エラー: {train_data_dir_path} の下に複数のサブフォルダが見つかりました: {', '.join(subfolders)}。今回は1つのサブフォルダのみをサポートしています。"
+            
+            # 実際に使用するフォルダ（サブフォルダ）
+            images_dir = os.path.join(train_data_dir_path, subfolders[0])
+            log.info(f"Caption生成対象フォルダ: {images_dir}")
+            
+            # 既存キャプションファイルの確認（上書き確認）
+            if not overwrite:
+                import glob
+                caption_files = glob.glob(os.path.join(images_dir, "*.txt"))
+                if caption_files:
+                    file_count = len(caption_files)
+                    return f"警告: 既存のキャプションファイルが{file_count}個見つかりました。上書きする場合は「Overwrite existing captions」をチェックしてください。"
+            
+            # 既存のcaption_images関数をインポート
+            from kohya_gui.basic_caption_gui import caption_images
+            
+            # caption_images関数を呼び出し
+            caption_images(
+                caption_text=caption_text.strip(),
+                images_dir=images_dir,
+                overwrite=overwrite,
+                caption_ext=".txt",
+                prefix="",
+                postfix="",
+                find_text="",
+                replace_text=""
+            )
+            
+            # 生成されたキャプションファイル数を確認
+            # 画像ファイル（Jpeg系）のみをカウント
+            image_extensions = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
+            image_extensions_upper = {ext.upper() for ext in image_extensions}
+            
+            image_count = 0
+            caption_count = 0
+            
+            # フォルダ内のファイルを列挙してカウント
+            for filename in os.listdir(images_dir):
+                file_path = os.path.join(images_dir, filename)
+                if os.path.isfile(file_path):
+                    # 拡張子を取得（小文字に変換）
+                    _, ext = os.path.splitext(filename)
+                    ext_lower = ext.lower()
+                    
+                    # 画像ファイル（Jpeg系）をカウント
+                    if ext_lower in image_extensions or ext in image_extensions_upper:
+                        image_count += 1
+                    # キャプションファイル（.txt）をカウント
+                    elif ext_lower == '.txt':
+                        caption_count += 1
+            
+            result_msg = f"✓ キャプションファイル生成完了\n"
+            result_msg += f"  画像ファイル（Jpeg系）: {image_count}個\n"
+            result_msg += f"  キャプションファイル（.txt）: {caption_count}個"
+            
+            log.info(result_msg)
+            return result_msg
+            
+        except Exception as e:
+            error_msg = f"エラー: キャプション生成に失敗しました - {str(e)}"
+            log.error(error_msg)
+            return error_msg
+    
+    def _generate_minimal_params(
+        self,
+        pretrained_model_name_or_path,
+        train_data_dir,
+        output_name,
+        output_dir,
+        learning_rate,
+        text_encoder_lr,
+        network_dim,
+        network_alpha,
+        epoch,
+        max_train_steps,
+        max_resolution,
+        train_batch_size,
+        cache_latents,
+        cache_latents_to_disk,
+        save_model_as,
+        save_precision
+    ) -> dict:
+        """
+        MinimalタブのUI入力値から16個のパラメータを辞書形式で生成
+        
+        Returns:
+            dict: Minimalタブのパラメータ辞書（16個）
+        """
+        return {
+            'pretrained_model_name_or_path': pretrained_model_name_or_path,
+            'train_data_dir': train_data_dir,
+            'output_name': output_name,
+            'output_dir': output_dir,
+            'learning_rate': float(learning_rate) if learning_rate else 0.0001,
+            'text_encoder_lr': float(text_encoder_lr) if text_encoder_lr else 0.00005,
+            'network_dim': int(network_dim) if network_dim else 16,
+            'network_alpha': int(network_alpha) if network_alpha else 16,
+            'epoch': int(epoch) if epoch else 6,
+            'max_train_steps': int(max_train_steps) if max_train_steps else 0,
+            'max_resolution': max_resolution if max_resolution else '512,512',
+            'train_batch_size': int(train_batch_size) if train_batch_size else 1,
+            'cache_latents': bool(cache_latents) if cache_latents is not None else True,
+            'cache_latents_to_disk': bool(cache_latents_to_disk) if cache_latents_to_disk is not None else False,
+            'save_model_as': save_model_as if save_model_as else 'safetensors',
+            'save_precision': save_precision if save_precision else 'fp16'
+        }
+    
+    def _get_training_defaults(self) -> dict:
+        """
+        TrainingタブのUIコンポーネントの初期値（デフォルト値）を取得
+        
+        注意: デフォルト値を「生成」するのではなく、
+        TrainingタブのUIコンポーネントの初期値と同じ値を使用する
+        
+        Returns:
+            dict: Trainingタブのデフォルト値辞書（229個のパラメータ）
+        """
+        # TrainingタブのUIコンポーネントの初期値（lora_gui.pyから取得）
+        # ImplementationSpecification_Design_Requirement_001_VERIFIED.md に基づく
+        
+        defaults = {
+            # source model section（train_model関数の引数順序に従う）
+            'v2': False,
+            'v_parameterization': False,
+            'sdxl': True,  # SDXL固定（MinimalタブはSDXL専用）
+            'flux1_checkbox': False,
+            'dataset_config': '',
+            'model_list': '',
+            'training_comment': '',
+            
+            # folders section
+            'logging_dir': '',
+            'reg_data_dir': '',
+            
+            # basic training section
+            'lr_scheduler': 'cosine',
+            'lr_warmup': 10,
+            'lr_warmup_steps': 0,
+            'save_every_n_epochs': 0,
+            'seed': '',
+            'caption_extension': '.txt',
+            'enable_bucket': False,
+            'stop_text_encoder_training': 0,
+            'min_bucket_reso': 256,
+            'max_bucket_reso': 1024,
+            'max_train_epochs': 0,
+            'lr_scheduler_num_cycles': 1,
+            'lr_scheduler_power': 1.0,
+            'optimizer': 'adamw8bit',
+            'optimizer_args': '',
+            'lr_scheduler_args': '',
+            'lr_scheduler_type': '',
+            'max_grad_norm': 1.0,
+            
+            # accelerate launch section
+            'mixed_precision': 'fp16',
+            'num_cpu_threads_per_process': 1,
+            'num_processes': 1,
+            'num_machines': 1,
+            'multi_gpu': False,
+            'gpu_ids': '',
+            'main_process_port': 29500,
+            'dynamo_backend': '',
+            'dynamo_mode': '',
+            'dynamo_use_fullgraph': False,
+            'dynamo_use_dynamic': False,
+            'extra_accelerate_launch_args': '',
+            
+            # advanced training section
+            'gradient_checkpointing': False,
+            'fp8_base': False,
+            'fp8_base_unet': False,
+            'full_fp16': False,
+            'highvram': False,
+            'lowvram': False,
+            'xformers': False,
+            'shuffle_caption': False,
+            'save_state': False,
+            'save_state_on_train_end': False,
+            'resume': '',
+            'prior_loss_weight': 1.0,
+            'color_aug': False,
+            'flip_aug': False,
+            'masked_loss': False,
+            'clip_skip': 1,
+            'gradient_accumulation_steps': 1,
+            'mem_eff_attn': False,
+            'max_token_length': 75,
+            'max_data_loader_n_workers': 0,
+            'keep_tokens': 0,
+            'persistent_data_loader_workers': False,
+            'bucket_no_upscale': False,
+            'random_crop': False,
+            'bucket_reso_steps': 64,
+            'v_pred_like_loss': 0,
+            'caption_dropout_every_n_epochs': 0,
+            'caption_dropout_rate': 0,
+            'noise_offset_type': 'original',
+            'noise_offset': 0,
+            'noise_offset_random_strength': False,
+            'adaptive_noise_scale': 0,
+            'multires_noise_iterations': 0,
+            'multires_noise_discount': 0,
+            'ip_noise_gamma': 0,
+            'ip_noise_gamma_random_strength': 0,
+            'additional_parameters': '',
+            'loss_type': 'l2',
+            'huber_schedule': 'snr',
+            'huber_c': 0.1,
+            'huber_scale': 0.1,
+            'vae_batch_size': 0,
+            'min_snr_gamma': 0,
+            'save_every_n_steps': 0,
+            'save_last_n_steps': 0,
+            'save_last_n_steps_state': 0,
+            'save_last_n_epochs': 0,
+            'save_last_n_epochs_state': 0,
+            'skip_cache_check': False,
+            'log_with': '',
+            'wandb_api_key': '',
+            'wandb_run_name': '',
+            'log_tracker_name': '',
+            'log_tracker_config': '',
+            'log_config': '',
+            'scale_v_pred_loss_like_noise_pred': False,
+            'full_bf16': False,
+            'min_timestep': 0,
+            'max_timestep': 1000,
+            'vae': '',
+            'weighted_captions': False,
+            'debiased_estimation_loss': False,
+            
+            # sdxl parameters section
+            'sdxl_cache_text_encoder_outputs': False,
+            'sdxl_no_half_vae': False,
+            
+            # LoRA network section
+            'text_encoder_lr': 0.00005,  # Minimalタブで上書きされる
+            't5xxl_lr': 0,
+            'unet_lr': 0.0001,
+            'network_weights': '',
+            'dim_from_weights': False,
+            'network_dim': 16,  # Minimalタブで上書きされる
+            'network_alpha': 16,  # Minimalタブで上書きされる
+            'LoRA_type': 'Standard',
+            'factor': -1,
+            'bypass_mode': False,
+            'dora_wd': False,
+            'use_cp': False,
+            'use_tucker': False,
+            'use_scalar': False,
+            'rank_dropout_scale': False,
+            'constrain': 0.0,
+            'rescaled': False,
+            'train_norm': False,
+            'decompose_both': False,
+            'train_on_input': True,
+            'conv_dim': 32,
+            'conv_alpha': 1,
+            'sample_every_n_steps': 0,
+            'sample_every_n_epochs': 0,
+            'sample_sampler': 'euler_a',
+            'sample_prompts': '',
+            'down_lr_weight': '',
+            'mid_lr_weight': '',
+            'up_lr_weight': '',
+            'block_lr_zero_threshold': 0,
+            'block_dims': '',
+            'block_alphas': '',
+            'conv_block_dims': '',
+            'conv_block_alphas': '',
+            'unit': 1,
+            'scale_weight_norms': 1.0,
+            'network_dropout': 0,
+            'rank_dropout': 0,
+            'module_dropout': 0,
+            'LyCORIS_preset': 'full',
+            'loraplus_lr_ratio': 0,
+            'loraplus_text_encoder_lr_ratio': 0,
+            'loraplus_unet_lr_ratio': 0,
+            'train_lora_ggpo': False,
+            'ggpo_sigma': 0.5,
+            'ggpo_beta': 0.5,
+            
+            # huggingface section
+            'huggingface_repo_id': '',
+            'huggingface_token': '',
+            'huggingface_repo_type': 'model',
+            'huggingface_repo_visibility': 'private',
+            'huggingface_path_in_repo': '',
+            'save_state_to_huggingface': False,
+            'resume_from_huggingface': False,
+            'async_upload': False,
+            
+            # metadata section
+            'metadata_author': '',
+            'metadata_description': '',
+            'metadata_license': '',
+            'metadata_tags': '',
+            'metadata_title': '',
+            
+            # Flux1 parameters
+            'flux1_cache_text_encoder_outputs': False,
+            'flux1_cache_text_encoder_outputs_to_disk': False,
+            'ae': '',
+            'clip_l': '',
+            't5xxl': '',
+            'discrete_flow_shift': 3.0,
+            'model_prediction_type': 'epsilon',
+            'timestep_sampling': 'leading',
+            'split_mode': 'alternating',
+            'train_blocks': 'all',
+            't5xxl_max_token_length': 512,
+            'enable_all_linear': False,
+            'guidance_scale': 3.5,
+            'mem_eff_save': False,
+            'apply_t5_attn_mask': False,
+            'split_qkv': False,
+            'train_t5xxl': False,
+            'cpu_offload_checkpointing': False,
+            'blocks_to_swap': 4,
+            'single_blocks_to_swap': 4,
+            'double_blocks_to_swap': 4,
+            'img_attn_dim': 0,
+            'img_mlp_dim': 0,
+            'img_mod_dim': 0,
+            'single_dim': 0,
+            'txt_attn_dim': 0,
+            'txt_mlp_dim': 0,
+            'txt_mod_dim': 0,
+            'single_mod_dim': 0,
+            'in_dims': '',
+            'train_double_block_indices': '',
+            'train_single_block_indices': '',
+            
+            # SD3 parameters
+            'sd3_cache_text_encoder_outputs': False,
+            'sd3_cache_text_encoder_outputs_to_disk': False,
+            'sd3_fused_backward_pass': False,
+            'clip_g': '',
+            'clip_g_dropout_rate': 0,
+            'sd3_clip_l': '',
+            'sd3_clip_l_dropout_rate': 0,
+            'sd3_disable_mmap_load_safetensors': False,
+            'sd3_enable_scaled_pos_embed': False,
+            'logit_mean': 0,
+            'logit_std': 0,
+            'mode_scale': 0,
+            'pos_emb_random_crop_rate': 0,
+            'save_clip': False,
+            'save_t5xxl': False,
+            'sd3_t5_dropout_rate': 0,
+            'sd3_t5xxl': '',
+            't5xxl_device': '',
+            't5xxl_dtype': '',
+            'sd3_text_encoder_batch_size': 1,
+            'weighting_scheme': 'sigma_sqrt',
+            'sd3_checkbox': False,
+        }
+        
+        # SDXL顔LoRA用の最適化済みデフォルト値を適用
+        defaults.update(MINIMAL_DEFAULT_CONFIG)
+        defaults.update(SDXL_FACE_LORA_FIXED)
+        
+        return defaults
+    
+    def _merge_params(self, training_defaults: dict, minimal_params: dict) -> dict:
+        """
+        Trainingタブのデフォルト値に、Minimalタブで設定した値を上書き
+        
+        Args:
+            training_defaults: Trainingタブのデフォルト値辞書（229個）
+            minimal_params: Minimalタブのパラメータ辞書（16個）
+            
+        Returns:
+            dict: マージ後のパラメータ辞書（229個）
+        """
+        # Trainingタブのデフォルト値に、Minimalタブの値を上書き
+        final_params = {**training_defaults, **minimal_params}
+        return final_params
+    
+    def _build_settings_list(self, params: dict) -> list:
+        """
+        settings_list を構築（Trainingタブと同じ順序）
+        
+        Args:
+            params: マージ後のパラメータ辞書（229個）
+            
+        Returns:
+            list: train_model関数に渡すsettings_list（229個の実際の値）
+        """
+        from minimal.utils import build_settings_list_from_params
+        return build_settings_list_from_params(params)
+    
     def start_training(
         self,
         pretrained_model_name_or_path,
@@ -379,8 +998,13 @@ class SDXLSimpleTab:
         save_precision
     ):
         """
-        学習開始（既存のtrain_model関数を呼び出し）
-        UIの値を既存関数の引数形式に変換して渡す
+        学習開始 - Design_Requirement_001.md に基づく実装（5ステップフロー）
+        
+        1. Minimalパラメータ生成（16個）
+        2. Trainingタブのデフォルト値を取得（UIコンポーネントの初期値、生成しない）
+        3. Minimalパラメータマージ
+        4. settings_list を構築（train_model関数の引数順序と完全に一致）
+        5. train_model() 関数を既存と同じ方法で呼び出す
         """
         try:
             # 入力検証
@@ -393,14 +1017,11 @@ class SDXLSimpleTab:
             if not output_dir:
                 return "エラー: 出力フォルダが必要です"
             
-            # 既存のtrain_model関数をインポート
-            from kohya_gui.lora_gui import train_model
-            
-            # UIパラメータを既存関数の引数形式に変換
-            args = self._convert_ui_to_train_args(
+            # ステップ1: Minimalパラメータ生成（16個）
+            minimal_params = self._generate_minimal_params(
                 pretrained_model_name_or_path,
                 train_data_dir,
-                output_name, 
+                output_name,
                 output_dir,
                 learning_rate,
                 text_encoder_lr,
@@ -416,14 +1037,34 @@ class SDXLSimpleTab:
                 save_precision
             )
             
-            # 既存のtrain_model関数を呼び出し
-            result = train_model(*args)
+            # ステップ2: Trainingタブのデフォルト値を取得（UIコンポーネントの初期値、生成しない）
+            training_defaults = self._get_training_defaults()
+            
+            # ステップ3: Minimalパラメータマージ
+            final_params = self._merge_params(training_defaults, minimal_params)
+            
+            # text_encoder_lrとlearning_rateが異なる場合、down_lr_weightとup_lr_weightを設定
+            if float(text_encoder_lr) != float(learning_rate):
+                # Text EncoderとU-Netで異なる学習率を使用する場合
+                final_params['down_lr_weight'] = str(float(text_encoder_lr))
+                final_params['up_lr_weight'] = str(float(learning_rate))
+            
+            # ステップ4: settings_list を構築（train_model関数の引数順序と完全に一致）
+            settings_list = self._build_settings_list(final_params)
+            
+            # ステップ5: train_model() 関数を既存と同じ方法で呼び出す
+            from kohya_gui.lora_gui import train_model
+            result = train_model(
+                headless=self.headless,
+                print_only=False,
+                *settings_list
+            )
             
             return result if result else "学習が完了しました"
             
         except Exception as e:
             error_msg = f"エラー: {str(e)}"
-            log.error(error_msg)
+            log.error(error_msg, exc_info=True)
             return error_msg
     
     def save_config(self, explicit_save: bool, *args):
@@ -438,30 +1079,49 @@ class SDXLSimpleTab:
             is_explicit_save = bool(explicit_save)
             
             # 現在の設定値を取得
+            # _get_all_inputs()の順序に合わせて引数を取得:
+            # explicit_save は別の引数として渡される（*argsには含まれない）
+            # args[0]: pretrained_model_name_or_path (_get_all_inputs()[0])
+            # args[1]: train_data_dir (_get_all_inputs()[1])
+            # args[2]: output_name (_get_all_inputs()[2])
+            # args[3]: output_dir (_get_all_inputs()[3])
+            # args[4]: learning_rate (_get_all_inputs()[4])
+            # args[5]: text_encoder_lr (_get_all_inputs()[5])
+            # args[6]: network_dim (_get_all_inputs()[6])
+            # args[7]: network_alpha (_get_all_inputs()[7])
+            # args[8]: epoch (_get_all_inputs()[8])
+            # args[9]: max_train_steps (_get_all_inputs()[9])
+            # args[10]: max_resolution (_get_all_inputs()[10])
+            # args[11]: train_batch_size (_get_all_inputs()[11])
+            # args[12]: cache_latents (_get_all_inputs()[12])
+            # args[13]: cache_latents_to_disk (_get_all_inputs()[13])
+            # args[14]: save_model_as (_get_all_inputs()[14])
+            # args[15]: save_precision (_get_all_inputs()[15])
+            
             config_data = {
                 'model': {
-                    'pretrained_model_name_or_path': args[0] if args[0] else '',
-                    'save_model_as': args[12],
-                    'save_precision': args[13]
+                    'pretrained_model_name_or_path': args[0] if len(args) > 0 and args[0] else '',
+                    'save_model_as': args[14] if len(args) > 14 and args[14] else 'safetensors',
+                    'save_precision': args[15] if len(args) > 15 and args[15] else 'fp16'
                 },
                 'training_data': {
-                    'train_data_dir': args[1] if args[1] else '',
-                    'max_resolution': str(args[8]) if args[8] else "512,512",
-                    'train_batch_size': int(args[9]) if args[9] else 1
+                    'train_data_dir': args[1] if len(args) > 1 and args[1] else '',
+                    'max_resolution': str(args[10]) if len(args) > 10 and args[10] else "512,512",
+                    'train_batch_size': int(args[11]) if len(args) > 11 and args[11] else 1
                 },
                 'training_params': {
-                    'learning_rate': float(args[4]) if args[4] else 0.0001,
-                    'text_encoder_lr': float(args[5]) if args[5] else 0.00005,
-                    'network_dim': int(args[6]) if args[6] else 16,
-                    'network_alpha': int(args[7]) if args[7] else 16,
-                    'epoch': int(args[10]) if args[10] else 6,
-                    'max_train_steps': int(args[11]) if args[11] else 1600,
-                    'cache_latents': bool(args[14]) if args[14] is not None else True,
-                    'cache_latents_to_disk': bool(args[15]) if args[15] is not None else True
+                    'learning_rate': float(args[4]) if len(args) > 4 and args[4] else 0.0001,
+                    'text_encoder_lr': float(args[5]) if len(args) > 5 and args[5] else 0.00005,
+                    'network_dim': int(args[6]) if len(args) > 6 and args[6] else 16,
+                    'network_alpha': int(args[7]) if len(args) > 7 and args[7] else 16,
+                    'epoch': int(args[8]) if len(args) > 8 and args[8] else 6,
+                    'max_train_steps': int(args[9]) if len(args) > 9 and args[9] else 1600,
+                    'cache_latents': bool(args[12]) if len(args) > 12 and args[12] is not None else True,
+                    'cache_latents_to_disk': bool(args[13]) if len(args) > 13 and args[13] is not None else False
                 },
                 'output': {
-                    'output_name': args[2] if args[2] else '',
-                    'output_dir': args[3] if args[3] else './outputs'
+                    'output_name': args[2] if len(args) > 2 and args[2] is not None else '',
+                    'output_dir': args[3] if len(args) > 3 and args[3] is not None else './outputs'
                 }
             }
             
@@ -485,6 +1145,20 @@ class SDXLSimpleTab:
             log.error(error_msg)
             return error_msg
     
+    def save_config_and_reset_button(self, explicit_save: bool, *args):
+        """設定を保存し、Save Configボタンを元に戻す
+        
+        Returns:
+            tuple: (output_log メッセージ, ボタン更新)
+        """
+        result = self.save_config(explicit_save, *args)
+        # 保存成功時はボタンを元に戻す
+        if "失敗" not in result and "エラー" not in result:
+            return result, gr.update(value="Save Config", variant="secondary")
+        else:
+            # エラー時はハイライトを維持
+            return result, gr.update()
+    
     def _convert_ui_to_train_args(
         self, 
         pretrained_model_name_or_path,
@@ -507,7 +1181,7 @@ class SDXLSimpleTab:
         """UIの入力値を既存train_model関数の引数形式に変換"""
         
         # プリセット値をベースに設定
-        defaults = SDXL_FACE_LORA_DEFAULTS.copy()
+        defaults = MINIMAL_DEFAULT_CONFIG.copy()
         fixed = SDXL_FACE_LORA_FIXED.copy()
         
         # UIからの値で上書き

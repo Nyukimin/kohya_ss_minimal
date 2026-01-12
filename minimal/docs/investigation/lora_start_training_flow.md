@@ -324,7 +324,7 @@ Minimalタブ（`minimal/sdxl_simple_tab.py`）で設定したパラメータは
 
 3. **_convert_ui_to_train_args()による引数変換**（505-688行目）
    - UIの16個の入力値を `train_model()` 関数の引数形式（243個）に変換
-   - プリセット値（`SDXL_FACE_LORA_DEFAULTS`）と固定値（`SDXL_FACE_LORA_FIXED`）をマージ
+   - プリセット値（`MINIMAL_DEFAULT_CONFIG`）と固定値（`SDXL_FACE_LORA_FIXED`）をマージ
    - UIからの値で上書き
 
 4. **train_model()関数の実行**
